@@ -5,6 +5,6 @@ class Event(object):
     def attach(self, func):
         self.handlers.append(func)
     
-    def trigger(self, *args):
+    def __call__(self, *args):
         for handler in self.handlers:
             handler(*args)
