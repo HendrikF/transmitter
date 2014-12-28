@@ -1,8 +1,10 @@
 from threading import Thread
 import socket
 from .event import Event
+from .messages import MessageFactory
 
 class NetworkEndpoint(object):
+    """A NetworkEndpoint is a flexible interface for a Server and Client."""
     
     isServer = False
     isClient = False
@@ -16,6 +18,7 @@ class NetworkEndpoint(object):
         self.peers = []
         self.host = ''
         self.port = None
+        self.messageFactory = MessageFactory()
     
     def bind(self, host, port):
         if self.isServer:
@@ -47,7 +50,8 @@ class NetworkEndpoint(object):
     def update(self):
         pass
     
-    def send(self, data):
+    def send(self, message):
+        data = message.getBytes()
         for peer in self.peers:
             peer.send(data)
     
@@ -79,6 +83,9 @@ class NetworkEndpoint(object):
         return '<NetworkEndpoint{}>'.format(x)
 
 class NetworkPeer(object):
+    """A NetworkPeer provides the ability to write and listen on sockets.
+    The Server has one NetworkPeer for each connected Client.
+    A Client has only one NetworkPeer for the Server."""
     def __init__(self, endpoint, sock, addr=None):
         self.endpoint = endpoint
         self.socket = sock
@@ -103,7 +110,7 @@ class NetworkPeer(object):
     
     def _listen(self):
         while True:
-            data = self.socket.recv(1024)
+            data = self.socket.recv(10240)
             if not data:
                 break
             self.endpoint._dataReceived(data, self)
