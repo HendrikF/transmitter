@@ -18,7 +18,8 @@ class NetworkEndpoint(object):
         self.thread = None
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.peers = []
+        self.peers = {}
+        self._lastPeerID = 0
         self.host = ''
         self.port = None
         self.messageFactory = MessageFactory()
@@ -50,7 +51,8 @@ class NetworkEndpoint(object):
     
     def stop(self):
         self.accepting = False
-        for peer in self.peers:
+        # changes on iteration!
+        for _id, peer in list(self.peers.items())[:]:
             peer.stop()
         self.socket.close()
     
@@ -62,8 +64,15 @@ class NetworkEndpoint(object):
     
     def send(self, message):
         data = message.getBytes()
-        for peer in self.peers:
+        for _id, peer in self.peers.items():
             peer.send(data)
+    
+    def sendTo(self, _id, message):
+        try:
+            peer = self.peers[_id]
+        except KeyError:
+            raise PeerNotFound("Can't send message '{}' to peer id '{}'".format(message, _id))
+        peer.send(message.getBytes())
     
     def _accept(self):
         self.accepting = True
@@ -72,9 +81,9 @@ class NetworkEndpoint(object):
             self._newPeer(conn, addr)
     
     def _newPeer(self, sock, addr=None):
-        peer = NetworkPeer(self, sock, addr)
+        peer = NetworkPeer(self, self.nextPeerID, sock, addr)
         peer.start()
-        self.peers.append(peer)
+        self.peers[peer.id] = peer
         self.onConnect(peer)
     
     def msgReceived(self, msg, peer):
@@ -85,7 +94,7 @@ class NetworkEndpoint(object):
                 self.receivedMessages.append((msg, peer))
     
     def _peerDisconnected(self, peer):
-        self.peers.remove(peer)
+        self.peers.pop(peer.id)
         self.onDisconnect(peer)
     
     def __repr__(self):
@@ -96,13 +105,19 @@ class NetworkEndpoint(object):
             x += ' (client mode)'
         x += ' ({}, {})'.format(self.host, self.port)
         return '<NetworkEndpoint{}>'.format(x)
+    
+    @property
+    def nextPeerID(self):
+        self._lastPeerID += 1
+        return self._lastPeerID
 
 class NetworkPeer(object):
     """A NetworkPeer provides the ability to write and listen on sockets.
     The Server has one NetworkPeer for each connected Client.
     A Client has only one NetworkPeer for the Server."""
-    def __init__(self, endpoint, sock, addr=None):
+    def __init__(self, endpoint, _id, sock, addr=None):
         self.endpoint = endpoint
+        self.id = _id
         self.socket = sock
         self.addr = addr
         self.thread = None
@@ -143,4 +158,4 @@ class NetworkPeer(object):
             self.endpoint.msgReceived(msg, self)
     
     def __repr__(self):
-        return '<NetworkPeer {}{}>'.format(self.addr, ' active' if self.active else '')
+        return '<NetworkPeer id={} addr={} act={}>'.format(self.id, self.addr, self.active)
