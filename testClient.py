@@ -24,5 +24,4 @@ if __name__ == '__main__':
     
     client.send(msg)
     
-    #client.peers[0].thread.join()
     client.stop()

@@ -51,9 +51,9 @@ class NetworkEndpoint(object):
     
     def stop(self):
         self.accepting = False
-        # changes on iteration!
-        for _id, peer in list(self.peers.items())[:]:
-            peer.stop()
+        for _id, peer in self.peers.items():
+            peer.stop(pop=False)
+        self.peers = {}
         self.socket.close()
     
     def update(self):
@@ -69,10 +69,9 @@ class NetworkEndpoint(object):
     
     def sendTo(self, _id, message):
         try:
-            peer = self.peers[_id]
+            self.peers[_id].send(message.getBytes())
         except KeyError:
             raise PeerNotFound("Can't send message '{}' to peer id '{}'".format(message, _id))
-        peer.send(message.getBytes())
     
     def _accept(self):
         self.accepting = True
@@ -93,8 +92,9 @@ class NetworkEndpoint(object):
             else:
                 self.receivedMessages.append((msg, peer))
     
-    def _peerDisconnected(self, peer):
-        self.peers.pop(peer.id)
+    def _peerDisconnected(self, peer, pop=True):
+        if pop:
+            self.peers.pop(peer.id)
         self.onDisconnect(peer)
     
     def __repr__(self):
@@ -133,11 +133,12 @@ class NetworkPeer(object):
     def send(self, data):
         if self.active:
             return self.socket.send(data)
+        return False
     
-    def stop(self):
+    def stop(self, pop=True):
         self.active = False
-        self.endpoint._peerDisconnected(self)
         self.socket.close()
+        self.endpoint._peerDisconnected(self, pop)
     
     def _listen(self):
         while True:
