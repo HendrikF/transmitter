@@ -60,7 +60,13 @@ class NetworkEndpoint(object):
         """Call this method regularly in sync mode"""
         while len(self.receivedMessages) > 0:
             msg, peer = self.receivedMessages.popleft()
-            self.onMessage(msg, peer)
+            if msg.msgID > 0:
+                self.onMessage(msg, peer)
+            else:
+                if self.messageFactory.is_a(msg, 'TConnectMessage'):
+                    self.onConnect(peer)
+                elif self.messageFactory.is_a(msg, 'TDisconnectMessage'):
+                    self.onDisconnect(peer)
     
     def send(self, message):
         data = message.getBytes()
@@ -83,9 +89,14 @@ class NetworkEndpoint(object):
         peer = NetworkPeer(self, self.nextPeerID, sock, addr)
         peer.start()
         self.peers[peer.id] = peer
-        self.onConnect(peer)
+        if self.async:
+            self.onConnect(peer)
+        else:
+            msg = self.messageFactory.getByName('TConnectMessage')()
+            self.receivedMessages.append((msg, peer))
     
     def msgReceived(self, msg, peer):
+        # prevent system messages from entering system
         if msg.msgID > 0:
             if self.async:
                 self.onMessage(msg, peer)
@@ -95,7 +106,11 @@ class NetworkEndpoint(object):
     def _peerDisconnected(self, peer, pop=True):
         if pop:
             self.peers.pop(peer.id)
-        self.onDisconnect(peer)
+        if self.async:
+            self.onDisconnect(peer)
+        else:
+            msg = self.messageFactory.getByName('TDisconnectMessage')()
+            self.receivedMessages.append((msg, peer))
     
     def __repr__(self):
         x = ''

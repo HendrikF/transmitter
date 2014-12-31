@@ -14,6 +14,14 @@ if __name__ == '__main__':
         print(msg, peer)
     server.onMessage.attach(onMessage)
     
+    def onConnect(peer):
+        print('Connected:', peer)
+    server.onConnect.attach(onConnect)
+    
+    def onDisconnect(peer):
+        print('Disconnected', peer)
+    server.onDisconnect.attach(onDisconnect)
+    
     server.bind('', 55555)
     server.start()
     

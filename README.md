@@ -49,9 +49,8 @@ if __name__ == '__main__':
     
     while True:
         sleep(0.01)
-        # in sync mode, update() calls the onMessage event on the server
-        # so the events run on the same thread
-        # the on(Dis)Connect events are always called on the listening thread
+        # in sync mode, update() calls the onMessage, onConnect, onDisconnect events on the server
+        # so the events run on the same (main) thread
         server.update()
 ```
 
@@ -81,6 +80,8 @@ if __name__ == '__main__':
     client.connect('localhost', 55555)
     client.start()
     
+    # The following is equivalent to
+    # msg = AMessage()
     msg = client.messageFactory.getByName('AMessage')()
     msg.bytes = b'All message data can be assigned that way'
     

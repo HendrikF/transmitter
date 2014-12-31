@@ -78,6 +78,7 @@ class MessageFactory(object):
     def __init__(self):
         self.messagesByID = {}
         self.messagesByName = {}
+        self.add(TConnectMessage, TDisconnectMessage)
     
     def add(self, *classes):
         for clas in classes:
@@ -102,3 +103,21 @@ class MessageFactory(object):
     
     def is_a(self, message, name):
         return isinstance(message, self.getByName(name))
+
+# System messages
+###################
+
+class TSystemMessage(Message):
+    """Not for sending over the network!
+    These Messages are just inserted into the queue when special events happen"""
+    def getBytes(self):
+        return b''
+    
+    def readFromByteBuffer(self, byteBuffer):
+        pass
+
+class TConnectMessage(TSystemMessage):
+    msgID = -1
+
+class TDisconnectMessage(TSystemMessage):
+    msgID = -2
