@@ -70,7 +70,7 @@ class NetworkEndpoint(object):
     
     def send(self, message):
         data = message.getBytes()
-        for _id, peer in self.peers.items():
+        for peer in self.peers.values():
             peer.send(data)
     
     def sendTo(self, _id, message):
