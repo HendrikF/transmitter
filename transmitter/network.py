@@ -165,12 +165,10 @@ class NetworkPeer(object):
         self.stop()
     
     def _parseMessages(self):
-        while self.buffer.contains(Message.boundaries[0]) and self.buffer.contains(Message.boundaries[1]):
-            self.buffer.read(len(Message.boundaries[0]))
-            msgID = self.buffer.readStruct('l')[0]
-            msg = self.endpoint.messageFactory.getByID(msgID)()
-            msg.readFromByteBuffer(self.buffer)
-            self.buffer.read(len(Message.boundaries[1]))
+        while True:
+            msg = self.endpoint.messageFactory.readMessage(self.buffer)
+            if not msg:
+                break
             self.endpoint.msgReceived(msg, self)
     
     def __repr__(self):

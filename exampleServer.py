@@ -2,7 +2,7 @@
 from time import sleep
 from transmitter.general import Server
 
-from testClient import AMessage
+from exampleClient import AMessage
 
 if __name__ == '__main__':
     

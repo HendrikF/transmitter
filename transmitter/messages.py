@@ -14,11 +14,6 @@ class Message(object):
         #'name': ('type', '(default)value')
     }
     
-    boundaries = (
-        b'\x00\xff\xff\xff\xff\x00\x00\x00\x00',
-        b'\x00\x00\x00\x00\xff\xff\xff\xff\x00'
-    )
-    
     def __init__(self):
         # make ordered dict to have keys in a defined order, dict would be 'random'
         msgData = OrderedDict(sorted(self.msgData.items()))
@@ -42,7 +37,7 @@ class Message(object):
             raise InvalidMessageField("key '{}' not found".format(name))
     
     def getBytes(self):
-        format = '!l'
+        format = '!Ql'
         values = [self.msgID]
         for k, v in self.msgData.items():
             t = v[0]
@@ -59,9 +54,9 @@ class Message(object):
                 logger.error('Cant encode message key of unknown type', t)
                 raise InvalidFieldFormat("type '{}' unknown".format(t))
             values.append(v)
-        return  self.boundaries[0] + \
-                struct.pack(format, *values) + \
-                self.boundaries[1]
+        size = struct.calcsize(format)
+        values = [size] + values
+        return struct.pack(format, *values)
     
     def readFromByteBuffer(self, byteBuffer):
         for k, v in self.msgData.items():
@@ -116,6 +111,17 @@ class MessageFactory(object):
     
     def is_a(self, message, name):
         return isinstance(message, self.getByName(name))
+    
+    def readMessage(self, byteBuffer):
+        if len(byteBuffer) >= struct.calcsize('!Q'):
+            if len(byteBuffer) >= byteBuffer.readStruct('Q', peek=True)[0]:
+                # now remove size
+                byteBuffer.readStruct('Q')[0]
+                msgID = byteBuffer.readStruct('l')[0]
+                msg = self.getByID(msgID)()
+                msg.readFromByteBuffer(byteBuffer)
+                return msg
+        return False
 
 # System messages
 ###################
