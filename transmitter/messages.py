@@ -2,6 +2,9 @@ import struct
 from collections import OrderedDict
 from .error import *
 
+import logging
+logger = logging.getLogger(__name__)
+
 class Message(object):
     """A Message is a packet of data which can be sent over the network.
     Every Message has a unique msgID and usually some fields of data of a special type and a default value.
@@ -20,12 +23,14 @@ class Message(object):
         # make ordered dict to have keys in a defined order, dict would be 'random'
         msgData = OrderedDict(sorted(self.msgData.items()))
         if self.msgID == 0:
+            logger.error('Message with id of 0 initialized, which is not allowed!')
             raise InvalidMessageID('msgID 0 is not allowed')
     
     def __getattr__(self, name):
         try:
             return self.msgData[name][1]
         except KeyError:
+            logger.error('Wanted to access nonexistent message key', name)
             raise InvalidMessageField("key '{}' not found".format(name))
     
     def __setattr__(self, name, value):
@@ -33,6 +38,7 @@ class Message(object):
             t, v = self.msgData[name]
             self.msgData[name] = (t, value)
         except KeyError:
+            logger.error('Wanted to change nonexistent message key', name)
             raise InvalidMessageField("key '{}' not found".format(name))
     
     def getBytes(self):
@@ -50,6 +56,7 @@ class Message(object):
                 values.append(len(v))
                 format += str(len(v)) + 's'
             else:
+                logger.error('Cant encode message key of unknown type', t)
                 raise InvalidFieldFormat("type '{}' unknown".format(t))
             values.append(v)
         return  self.boundaries[0] + \
@@ -68,6 +75,7 @@ class Message(object):
                     data = data.decode()
                 self.__setattr__(k, data)
             else:
+                logger.error('Cant decode message key of unknown type %s', t)
                 raise InvalidFieldFormat("type '{}' unknown".format(t))
     
     def __repr__(self):
@@ -83,22 +91,27 @@ class MessageFactory(object):
     def add(self, *classes):
         for clas in classes:
             if not issubclass(clas, Message):
+                logger.error('Message classes must subclass Message')
                 raise TypeError('Classes must subclass Message')
             if (clas.msgID in self.messagesByID) ^ (clas.__name__ in self.messagesByName):
+                logger.error('Message classes cant have the same id')
                 raise DuplicateMessageID
             self.messagesByID[clas.msgID] = clas
             self.messagesByName[clas.__name__] = clas
+            logger.info('Added message type to factory (%s, %s)', clas.__name__, clas.msgID)
     
     def getByID(self, _id):
         try:
             return self.messagesByID[_id]
         except KeyError:
+            logger.error('Cant find message with id %s', _id)
             raise MessageNotFound("Message id '{}' not found".format(_id))
     
     def getByName(self, name):
         try:
             return self.messagesByName[name]
         except KeyError:
+            logger.error('Cant find message with name %s', name)
             raise MessageNotFound("Message name '{}' not found".format(name))
     
     def is_a(self, message, name):
