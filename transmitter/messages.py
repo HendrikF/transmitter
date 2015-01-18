@@ -50,6 +50,7 @@ class Message(object):
                 format += 'l'
                 values.append(len(v))
                 format += str(len(v)) + 's'
+            elif t == 'bool':   format += '?'
             else:
                 logger.error('Cant encode message key of unknown type', t)
                 raise InvalidFieldFormat("type '{}' unknown".format(t))
@@ -69,6 +70,7 @@ class Message(object):
                 if t == 'str':
                     data = data.decode()
                 self.__setattr__(k, data)
+            elif t == 'bool':   self.__setattr__(k, byteBuffer.readStruct('?')[0])
             else:
                 logger.error('Cant decode message key of unknown type %s', t)
                 raise InvalidFieldFormat("type '{}' unknown".format(t))

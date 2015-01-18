@@ -21,12 +21,13 @@ class AMessage(Message):
     msgID = 1
     # here you define all the attributes of a message
     # the key should only contain characters
-    # the type can be one of int,float,str,bytes
+    # the type can be one of int,float,str,bytes,bool
     msgData = {
         'name': ('str', 'default value'),
         'bytes': ('bytes', b''),
         'int': ('int', 0),
-        'float': ('float', 0)
+        'float': ('float', 0),
+        'boolean': ('bool', True)
     }
 
 if __name__ == '__main__':
@@ -68,7 +69,8 @@ class AMessage(Message):
         'name': ('str', 'This is a string'),
         'bytes': ('bytes', b''),
         'int': ('int', 78),
-        'float': ('float', 9.76)
+        'float': ('float', 9.76),
+        'boolean': ('bool', True)
     }
 
 if __name__ == '__main__':

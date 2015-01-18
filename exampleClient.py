@@ -8,7 +8,8 @@ class AMessage(Message):
         'str': ('str', 'This is a string'),
         'bytes': ('bytes', b'this could be a binary file'),
         'int': ('int', 78),
-        'float': ('float', 9.76)
+        'float': ('float', 9.76),
+        'boolean': ('bool', True)
     }
 
 if __name__ == '__main__':
