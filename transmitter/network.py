@@ -155,6 +155,7 @@ class NetworkPeer(object):
                 return self.socket.send(data)
             except socket.error as e:
                 logger.error("Can't write to socket of peer %s: %s", self, e)
+                self.stop()
         return False
     
     def stop(self, pop=True):
