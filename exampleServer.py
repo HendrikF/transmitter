@@ -22,7 +22,7 @@ if __name__ == '__main__':
         print('Disconnected', peer)
     server.onDisconnect.attach(onDisconnect)
     
-    server.bind('', 55555)
+    server.bind(('', 55555))
     server.start()
     
     while True:

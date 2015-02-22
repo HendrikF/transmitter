@@ -1,6 +1,7 @@
 #!/usr/bin/python3
+from time import sleep
 from transmitter.general import Client
-from transmitter.messages import Message
+from transmitter.Message import Message
 
 class AMessage(Message):
     msgID = 1
@@ -18,11 +19,13 @@ if __name__ == '__main__':
     
     client.messageFactory.add(AMessage)
     
-    client.connect('localhost', 55555)
+    client.connect(('localhost', 55555))
     client.start()
     
     msg = client.messageFactory.getByName('AMessage')()
     
     client.send(msg)
     
-    client.stop()
+    client.update()
+    
+    client.disconnect()
