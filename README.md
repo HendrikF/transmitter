@@ -39,8 +39,12 @@ if __name__ == '__main__':
     # possible events are onConnect(peer), onMessage(msg, peer), onDisconnect(peer)
     def onMessage(msg, peer):
         print(msg, peer)
+        # check for a message type
+        if msg == 'AMessage':
+            print('It is an AMessage!')
     server.onMessage.attach(onMessage)
     
+    # because we are using UDP the socket must be bound
     server.bind('', 55555)
     # start listening for incomming connections
     server.start()
@@ -79,8 +83,7 @@ if __name__ == '__main__':
     client.connect('localhost', 55555)
     client.start()
     
-    # The following is equivalent to
-    # msg = AMessage()
+    # Take a new message from the factory
     msg = client.messageFactory.getByName('AMessage')()
     msg.bytes = b'All message data can be assigned that way'
     
@@ -88,7 +91,7 @@ if __name__ == '__main__':
     client.send(msg)
     # You have to call client.update() to send them
     
-    # Call client.update() regularly to recieve Messages from the server
+    # Call client.update() regularly to receive Messages from the server
     client.update()
     
     client.stop()

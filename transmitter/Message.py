@@ -1,5 +1,4 @@
 import struct
-from .error import *
 
 import logging
 logger = logging.getLogger(__name__)
@@ -14,6 +13,8 @@ class Message(object):
     }
     # cache bytes
     _bytes = b''
+    
+    _factory = None
     
     def __init__(self, **data):
         for key, value in data.items():
@@ -31,9 +32,9 @@ class Message(object):
         except KeyError:
             super().__setattr__(name, value)
         else:
-            self.msgData[name] = (t, value)
             # empty cache when changing value
             self._bytes = b''
+            self.msgData[name] = (t, value)
     
     def __len__(self):
         return len(self.bytes)
@@ -68,7 +69,7 @@ class Message(object):
             elif t == 'bool':   format += '?'
             else:
                 logger.error('Cant encode message key of unknown type', t)
-                raise InvalidFieldFormat("type '{}' unknown".format(t))
+                raise TypeError("type '{}' unknown".format(t))
             values.append(v)
         return struct.pack(format, *values)
     
@@ -86,7 +87,13 @@ class Message(object):
             elif t == 'bool':   self.__setattr__(k, byteBuffer.readStruct('?')[0])
             else:
                 logger.error('Cant decode message key of unknown type %s', t)
-                raise InvalidFieldFormat("type '{}' unknown".format(t))
+                raise TypeError("type '{}' unknown".format(t))
+    
+    def __eq__(self, name):
+        try:
+            return self._factory.isA(self, name)
+        except AttributeError:
+            return self.__class__.__name__ == name
     
     def __repr__(self):
         data = [(k, v[1]) for k, v in self._items()]
@@ -106,7 +113,9 @@ class MessageFactory(object):
                 raise TypeError('Classes must subclass Message')
             if (clas.msgID in self.messagesByID) ^ (clas.__name__ in self.messagesByName):
                 logger.error('Message classes cant have the same id')
-                raise DuplicateMessageID
+                raise ValueError('class {} or id {} already exists!'.format(clas.__name__, clas.msgID))
+            # give the class the factory, so the message can perform .isA()
+            clas._factory = self
             self.messagesByID[clas.msgID] = clas
             self.messagesByName[clas.__name__] = clas
             logger.info('Added message type to factory (%s, %s)', clas.__name__, clas.msgID)
@@ -116,16 +125,16 @@ class MessageFactory(object):
             return self.messagesByID[_id]
         except KeyError:
             logger.error('Cant find message with id %s', _id)
-            raise MessageNotFound("Message id '{}' not found".format(_id))
+            raise KeyError("Message id '{}' not found".format(_id))
     
     def getByName(self, name):
         try:
             return self.messagesByName[name]
         except KeyError:
             logger.error('Cant find message with name %s', name)
-            raise MessageNotFound("Message name '{}' not found".format(name))
+            raise KeyError("Message name '{}' not found".format(name))
     
-    def is_a(self, message, name):
+    def isA(self, message, name):
         return isinstance(message, self.getByName(name))
     
     def readMessage(self, byteBuffer):

@@ -12,6 +12,8 @@ if __name__ == '__main__':
     
     def onMessage(msg, peer):
         print(msg, peer)
+        if msg == 'AMessage':
+            print('It is an AMessage! :)')
     server.onMessage.attach(onMessage)
     
     def onConnect(peer):

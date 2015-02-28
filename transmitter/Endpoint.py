@@ -25,7 +25,6 @@ class Endpoint(object):
     def __init__(self):
         self.accepting = True
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        #self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.peers = {}
         self._lastPeerID = 0
         self.addr = None
@@ -68,6 +67,8 @@ class Endpoint(object):
             self.state = self.CONNECTING
     
     def start(self):
+        if not self.addr:
+            raise RuntimeError('The socket must be bound to an address - Call bind or connect')
         self.receivingThread = Thread(target=self._receive)
         self.receivingThread.daemon = True
         self.receivingThread.start()
@@ -97,9 +98,9 @@ class Endpoint(object):
                 if msg.msgID > 0:
                     self.onMessage(msg, peer)
                 else:
-                    if self.messageFactory.is_a(msg, 'TConnectMessage'):
+                    if msg == 'TConnectMessage':
                         self.onConnect(peer)
-                    elif self.messageFactory.is_a(msg, 'TDisconnectMessage'):
+                    elif msg == 'TDisconnectMessage':
                         self.onDisconnect(peer)
         self.sendOutgoingMessages()
     
