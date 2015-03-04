@@ -1,8 +1,6 @@
 # Transmitter
 
-Transmitter is a python library to send discrete packets of data over TCP/IP.
-
-It is intended to be extended to also support UDP in both unicast and multicast mode.
+Transmitter is a python library to send discrete packets of data over UDP.
 
 ## Usage examples
 
@@ -32,7 +30,6 @@ class AMessage(Message):
 
 if __name__ == '__main__':
     
-    # initialize server in sync mode, so you have to call server.update() (see last lines)
     server = Server()
     
     # make message available to server
@@ -42,15 +39,19 @@ if __name__ == '__main__':
     # possible events are onConnect(peer), onMessage(msg, peer), onDisconnect(peer)
     def onMessage(msg, peer):
         print(msg, peer)
+        # check for a message type
+        if msg == 'AMessage':
+            print('It is an AMessage!')
     server.onMessage.attach(onMessage)
     
+    # because we are using UDP the socket must be bound
     server.bind('', 55555)
     # start listening for incomming connections
     server.start()
     
     while True:
         sleep(0.01)
-        # in sync mode, update() calls the onMessage, onConnect, onDisconnect events on the server
+        # update() calls the onMessage, onConnect, onDisconnect events on the server
         # so the events run on the same (main) thread
         server.update()
 ```
@@ -82,14 +83,17 @@ if __name__ == '__main__':
     client.connect('localhost', 55555)
     client.start()
     
-    # The following is equivalent to
-    # msg = AMessage()
+    # Take a new message from the factory
     msg = client.messageFactory.getByName('AMessage')()
     msg.bytes = b'All message data can be assigned that way'
     
+    # This internally buffers the messages
     client.send(msg)
+    # You have to call client.update() to send them
     
-    # Call client.update() regularly to recieve Messages from the server
+    # Call client.update() regularly to receive Messages from the server
+    client.update()
+    
     client.stop()
 ```
 

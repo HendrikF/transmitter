@@ -1,5 +1,4 @@
 import struct
-from .error import *
 
 import logging
 logger = logging.getLogger(__name__)
@@ -12,6 +11,10 @@ class Message(object):
     msgData = {
         #'name': ('type', '(default)value')
     }
+    # cache bytes
+    _bytes = b''
+    
+    _factory = None
     
     def __init__(self, **data):
         for key, value in data.items():
@@ -21,16 +24,20 @@ class Message(object):
         try:
             return self.msgData[name][1]
         except KeyError:
-            logger.error('Wanted to access nonexistent message key', name)
-            raise InvalidMessageField("key '{}' not found".format(name))
+            return super().__getattr__(name)
     
     def __setattr__(self, name, value):
         try:
             t, v = self.msgData[name]
-            self.msgData[name] = (t, value)
         except KeyError:
-            logger.error('Wanted to change nonexistent message key', name)
-            raise InvalidMessageField("key '{}' not found".format(name))
+            super().__setattr__(name, value)
+        else:
+            # empty cache when changing value
+            self._bytes = b''
+            self.msgData[name] = (t, value)
+    
+    def __len__(self):
+        return len(self.bytes)
     
     def _items(self):
         """Provides iterator access to msgData in sorted key order"""
@@ -39,8 +46,14 @@ class Message(object):
         for key in sorted(list(self.msgData.keys())):
             yield key, self.msgData[key]
     
-    def getBytes(self):
-        format = '!Ql'
+    @property
+    def bytes(self):
+        if not self._bytes:
+            self._bytes = self._getBytes()
+        return self._bytes
+    
+    def _getBytes(self):
+        format = '!l'
         values = [self.msgID]
         for k, v in self._items():
             t = v[0]
@@ -56,13 +69,11 @@ class Message(object):
             elif t == 'bool':   format += '?'
             else:
                 logger.error('Cant encode message key of unknown type', t)
-                raise InvalidFieldFormat("type '{}' unknown".format(t))
+                raise TypeError("type '{}' unknown".format(t))
             values.append(v)
-        size = struct.calcsize(format)
-        values = [size] + values
         return struct.pack(format, *values)
     
-    def readFromByteBuffer(self, byteBuffer):
+    def _readFromByteBuffer(self, byteBuffer):
         for k, v in self._items():
             t = v[0]
             if t == 'int':      self.__setattr__(k, byteBuffer.readStruct('l')[0])
@@ -76,7 +87,13 @@ class Message(object):
             elif t == 'bool':   self.__setattr__(k, byteBuffer.readStruct('?')[0])
             else:
                 logger.error('Cant decode message key of unknown type %s', t)
-                raise InvalidFieldFormat("type '{}' unknown".format(t))
+                raise TypeError("type '{}' unknown".format(t))
+    
+    def __eq__(self, name):
+        try:
+            return self._factory.isA(self, name)
+        except AttributeError:
+            return self.__class__.__name__ == name
     
     def __repr__(self):
         data = [(k, v[1]) for k, v in self._items()]
@@ -96,7 +113,9 @@ class MessageFactory(object):
                 raise TypeError('Classes must subclass Message')
             if (clas.msgID in self.messagesByID) ^ (clas.__name__ in self.messagesByName):
                 logger.error('Message classes cant have the same id')
-                raise DuplicateMessageID
+                raise ValueError('class {} or id {} already exists!'.format(clas.__name__, clas.msgID))
+            # give the class the factory, so the message can perform .isA()
+            clas._factory = self
             self.messagesByID[clas.msgID] = clas
             self.messagesByName[clas.__name__] = clas
             logger.info('Added message type to factory (%s, %s)', clas.__name__, clas.msgID)
@@ -106,30 +125,23 @@ class MessageFactory(object):
             return self.messagesByID[_id]
         except KeyError:
             logger.error('Cant find message with id %s', _id)
-            raise MessageNotFound("Message id '{}' not found".format(_id))
+            raise KeyError("Message id '{}' not found".format(_id))
     
     def getByName(self, name):
         try:
             return self.messagesByName[name]
         except KeyError:
             logger.error('Cant find message with name %s', name)
-            raise MessageNotFound("Message name '{}' not found".format(name))
+            raise KeyError("Message name '{}' not found".format(name))
     
-    def is_a(self, message, name):
+    def isA(self, message, name):
         return isinstance(message, self.getByName(name))
     
     def readMessage(self, byteBuffer):
-        # can we read the message length ?
-        if len(byteBuffer) >= struct.calcsize('!Q'):
-            # can we read one complete message ?
-            if len(byteBuffer) >= byteBuffer.readStruct('Q', peek=True)[0]:
-                # now remove size
-                byteBuffer.readStruct('Q')[0]
-                msgID = byteBuffer.readStruct('l')[0]
-                msg = self.getByID(msgID)()
-                msg.readFromByteBuffer(byteBuffer)
-                return msg
-        return False
+        msgID = byteBuffer.readStruct('l')[0]
+        msg = self.getByID(msgID)()
+        msg._readFromByteBuffer(byteBuffer)
+        return msg
 
 # System messages
 ###################
