@@ -5,6 +5,7 @@ from collections import deque
 from transmitter.Event import Event
 from transmitter.Message import Message, MessageFactory
 from transmitter.ByteBuffer import ByteBuffer
+from transmitter.Measurement import Measurement
 
 import logging
 logger = logging.getLogger(__name__)
@@ -34,15 +35,12 @@ class Endpoint(object):
         self.state = self.DISCONNECTED
         self.mtu = 1400
         
-        self.bytesIn = 0
-        self.bytesOut = 0
-        self.bytesTotal = property(lambda self: self.bytesIn+self.bytesOut)
-        self.packetsIn = 0
-        self.packetsOut = 0
-        self.packetsTotal = property(lambda self: self.packetsIn+self.packetsOut)
-        self.messagesIn = 0
-        self.messagesOut = 0
-        self.messagesTotal = property(lambda self: self.messagesIn+self.messagesOut)
+        self.bytesIn = Measurement()
+        self.bytesOut = Measurement()
+        self.packetsIn = Measurement()
+        self.packetsOut = Measurement()
+        self.messagesIn = Measurement()
+        self.messagesOut = Measurement()
         
         self.messageFactory = MessageFactory()
         self.receivedMessages = queue.Queue()
@@ -95,7 +93,7 @@ class Endpoint(object):
                 break
             else:
                 msg, peer = next
-                if msg.msgID > 0:
+                if msg.msgID >= 0:
                     self.onMessage(msg, peer)
                 else:
                     if msg == 'TConnectMessage':
