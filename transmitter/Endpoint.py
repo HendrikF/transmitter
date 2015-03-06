@@ -210,11 +210,11 @@ class Peer(object):
                 # send the packet
                 yield buf
                 # 'append' message to new buffer
-                buf = msg.bytes
+                buf = msg._bytes
                 size = l
             else:
                 # append message to buffer
-                buf += msg.bytes
+                buf += msg._bytes
                 size += l
             sentMessages.append(msg)
         

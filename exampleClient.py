@@ -5,6 +5,7 @@ from transmitter.Message import Message
 
 class AMessage(Message):
     msgID = 1
+    msgReliable = True
     msgData = {
         'str': ('str', 'This is a string'),
         'bytes': ('bytes', b'this could be a binary file'),

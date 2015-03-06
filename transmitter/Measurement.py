@@ -51,7 +51,7 @@ class Measurement(object):
     def current(self):
         self.update()
         try:
-            return sum(v for v in self.samples) / (len(self.samples) * self.interval)
+            return sum(self.samples) / (len(self.samples) * self.interval)
         except ZeroDivisionError:
             return 0
     

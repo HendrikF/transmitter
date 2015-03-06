@@ -1,4 +1,5 @@
 import struct
+from transmitter.BitField import BitField
 
 import logging
 logger = logging.getLogger(__name__)
@@ -7,16 +8,33 @@ class Message(object):
     """A Message is a packet of data which can be sent over the network.
     Every Message has a unique msgID and usually some fields of data of a special type and a default value.
     Custom Messages have a msgID >= 0."""
+    ###########################################################################
+    # ONLY set the 1st 3 attributes in class definition, as they are defaults
+    # Use normal API to modify message instances
     msgID = 0
+    msgReliable = False
     msgData = {
         #'name': ('type', '(default)value')
     }
+    ###########################################################################
+    
     # cache bytes
-    _bytes = b''
+    _bytesCached = b''
     
     _factory = None
     
+    _flags = BitField()
+    
+    @property
+    def reliable(self):
+        return self._flags[0]
+    @reliable.setter
+    def reliable(self, value):
+        self._emptyCache()
+        self._flags[0] = value
+    
     def __init__(self, **data):
+        self.reliable = self.msgReliable
         for key, value in data.items():
             self.__setattr__(key, value)
     
@@ -32,12 +50,11 @@ class Message(object):
         except KeyError:
             super().__setattr__(name, value)
         else:
-            # empty cache when changing value
-            self._bytes = b''
+            self._emptyCache()
             self.msgData[name] = (t, value)
     
     def __len__(self):
-        return len(self.bytes)
+        return len(self._bytes)
     
     def _items(self):
         """Provides iterator access to msgData in sorted key order"""
@@ -47,14 +64,17 @@ class Message(object):
             yield key, self.msgData[key]
     
     @property
-    def bytes(self):
-        if not self._bytes:
-            self._bytes = self._getBytes()
-        return self._bytes
+    def _bytes(self):
+        if not self._bytesCached:
+            self._bytesCached = self._getBytes()
+        return self._bytesCached
+    
+    def _emptyCache(self):
+        self._bytesCached = b''
     
     def _getBytes(self):
-        format = '!l'
-        values = [self.msgID]
+        format = '!lB'
+        values = [self.msgID, self._flags]
         for k, v in self._items():
             t = v[0]
             v = v[1]
@@ -74,6 +94,8 @@ class Message(object):
         return struct.pack(format, *values)
     
     def _readFromByteBuffer(self, byteBuffer):
+        # msgID is read by factory
+        self._flags = BitField(byteBuffer.readStruct('B')[0])
         for k, v in self._items():
             t = v[0]
             if t == 'int':      self.__setattr__(k, byteBuffer.readStruct('l')[0])
