@@ -25,22 +25,22 @@ class Endpoint(object):
     
     def __init__(self):
         self.accepting = True
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self._socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.peers = {}
         self._lastPeerID = 0
         self.addr = None
         
-        self.receivingThread = None
+        self._receivingThread = None
         
         self.state = self.DISCONNECTED
         self.mtu = 1400
         
-        self.bytesIn = Measurement()
-        self.bytesOut = Measurement()
-        self.packetsIn = Measurement()
+        self.bytesIn    = Measurement()
+        self.bytesOut   = Measurement()
+        self.packetsIn  = Measurement()
         self.packetsOut = Measurement()
         self.messagesIn = Measurement()
-        self.messagesOut = Measurement()
+        self.messagesOut= Measurement()
         
         self.messageFactory = MessageFactory()
         self.receivedMessages = queue.Queue()
@@ -55,28 +55,28 @@ class Endpoint(object):
     def bind(self, addr):
         if self.isServer:
             self.addr = addr
-            self.socket.bind(addr)
+            self._socket.bind(addr)
             self.state = self.LISTENING
     
     def connect(self, addr):
         if self.isClient:
             self.addr = addr
-            self.socket.bind(('', 0))
+            self._socket.bind(('', 0))
             self.state = self.CONNECTING
     
     def start(self):
         if not self.addr:
             raise RuntimeError('The socket must be bound to an address - Call bind or connect')
-        self.receivingThread = Thread(target=self._receive)
-        self.receivingThread.daemon = True
-        self.receivingThread.start()
+        self._receivingThread = Thread(target=self._receive)
+        self._receivingThread.daemon = True
+        self._receivingThread.start()
     
     def disconnect(self):
         self.accepting = False
         for peer in list(self.peers.values())[:]:
             peer.disconnect(pop=False)
         self.peers = {}
-        self.socket.close()
+        self._socket.close()
     
     @property
     def _nextMessage(self):
@@ -96,9 +96,9 @@ class Endpoint(object):
                 if msg.msgID >= 0:
                     self.onMessage(msg, peer)
                 else:
-                    if msg == 'TConnectMessage':
+                    if msg == 'TConnect':
                         self.onConnect(peer)
-                    elif msg == 'TDisconnectMessage':
+                    elif msg == 'TDisconnect':
                         self.onDisconnect(peer)
         self.sendOutgoingMessages()
     
@@ -110,11 +110,11 @@ class Endpoint(object):
                 peer.send(message)
     
     def _send(self, data, addr):
-        self.bytesOut += self.socket.sendto(data, addr)
+        self.bytesOut += self._socket.sendto(data, addr)
         self.packetsOut += 1
     
     def _read(self):
-        result = self.socket.recvfrom(self.mtu)
+        result = self._socket.recvfrom(self.mtu)
         # result -> (data, addr)
         self.bytesIn += len(result[0])
         self.packetsIn += 1
@@ -126,14 +126,14 @@ class Endpoint(object):
     def _newPeer(self, addr):
         peer = Peer(self, addr, self.nextPeerID)
         self.peers[peer.id] = peer
-        msg = self.messageFactory.getByName('TConnectMessage')()
+        msg = self.messageFactory.getByName('TConnect')()
         self._putMessage(msg, peer)
         return peer
     
     def _peerDisconnected(self, peer, pop=True):
         if pop:
             self.peers.pop(peer.id)
-        msg = self.messageFactory.getByName('TDisconnectMessage')()
+        msg = self.messageFactory.getByName('TDisconnect')()
         self._putMessage(msg, peer)
     
     def sendOutgoingMessages(self):
@@ -147,16 +147,16 @@ class Endpoint(object):
             peer = self.getPeerByAddr(addr)
             if not peer:
                 peer = self._newPeer(addr)
-            self.processData(data, peer)
+            self._processData(data, peer)
     
-    def processData(self, data, peer):
+    def _processData(self, data, peer):
         byteBuffer = ByteBuffer(data)
         while len(byteBuffer):
             msg = self.messageFactory.readMessage(byteBuffer)
             self.messagesIn += 1
-            self.processMessage(msg, peer)
+            self._processMessage(msg, peer)
     
-    def processMessage(self, msg, peer):
+    def _processMessage(self, msg, peer):
         if peer.processIncommingMessage(msg) == self.MESSAGE_UNHANDLED:
             self._putMessage(msg, peer)
     

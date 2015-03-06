@@ -20,9 +20,7 @@ class Message(object):
     
     # cache bytes
     _bytesCached = b''
-    
     _factory = None
-    
     _flags = BitField()
     
     @property
@@ -126,7 +124,7 @@ class MessageFactory(object):
     def __init__(self):
         self.messagesByID = {}
         self.messagesByName = {}
-        self.add(TConnectMessage, TDisconnectMessage)
+        self.add(TConnect, TDisconnect, TAcknowledgement)
     
     def add(self, *classes):
         for clas in classes:
@@ -168,17 +166,11 @@ class MessageFactory(object):
 # System messages
 ###################
 
-class TSystemMessage(Message):
-    """Not for sending over the network!
-    These Messages are just inserted into the queue when special events happen"""
-    def getBytes(self):
-        return b''
-    
-    def readFromByteBuffer(self, byteBuffer):
-        pass
-
-class TConnectMessage(TSystemMessage):
+class TConnect(Message):
     msgID = -1
 
-class TDisconnectMessage(TSystemMessage):
+class TDisconnect(Message):
     msgID = -2
+
+class TAcknowledgement(Message):
+    msgID = -3
