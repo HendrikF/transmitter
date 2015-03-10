@@ -1,6 +1,13 @@
 # Transmitter
 
-Transmitter is a python library to send discrete packets of data over UDP.
+Transmitter is a python library to send discrete packets of data (messages) over User Datagram Protocol (UDP).
+
+## Features
+
+* reliable transmission when needed
+* combining some messages in one UDP-packet to save bandwith
+* does not exceed MTU to avoid packet fragmentation
+* simple message api
 
 ## Usage examples
 
@@ -96,6 +103,8 @@ if __name__ == '__main__':
     
     client.stop()
 ```
+
+Also see files `example*.py`.
 
 ## License
 
