@@ -22,8 +22,6 @@ if __name__ == '__main__':
     
     def onMessage(msg, peer):
         print(msg, peer)
-        if msg == 'AMessage':
-            print('It is an AMessage! :)')
     client.onMessage.attach(onMessage)
     
     def onConnect(peer):
@@ -34,7 +32,7 @@ if __name__ == '__main__':
         print('Disconnected', peer)
     client.onDisconnect.attach(onDisconnect)
     
-    client.connect(('127.0.0.1', 55555))
+    client.connect(('localhost', 55555))
     client.start()
     
     msg = client.messageFactory.getByName('AMessage')()

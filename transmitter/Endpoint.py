@@ -1,5 +1,5 @@
 import socket
-from threading import Thread, Lock
+from threading import Thread
 import queue
 from collections import deque
 from time import time
@@ -11,6 +11,8 @@ from transmitter.BitField import BitField
 
 import logging
 logger = logging.getLogger(__name__)
+
+PROTOCOL = 1
 
 class Endpoint(object):
     """A NetworkEndpoint is a flexible interface for a Server and Client."""
@@ -26,7 +28,7 @@ class Endpoint(object):
     isClient = False
     
     def __init__(self):
-        self.accepting = True
+        self.accepting = False
         self._socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.peers = {}
         self._lastPeerID = 0
@@ -51,23 +53,30 @@ class Endpoint(object):
         self.onConnect = Event()
         self.onDisconnect = Event()
         
-        self.lastOutgoingSequenceNumber = 0
+        self.lastOutgoingSequenceNumber = -1 if self.isClient else 0
+        
+        # TransportMessages
+        self.bufferedMessages = deque()
     
     @property
     def active(self):
-        return self.state in [self.LISTENING, self.CONNECTING, self.CONNECTED]
+        return self.state in [self.LISTENING, self.CONNECTED]
     
     def bind(self, addr):
-        if self.isServer:
-            self.addr = addr
-            self._socket.bind(addr)
-            self.state = self.LISTENING
+        self.addr = addr
+        self._socket.bind(addr)
+        self.accepting = True
+        self.state = self.LISTENING
     
     def connect(self, addr):
-        if self.isClient:
-            self.addr = addr
-            self._socket.bind(('', 0))
-            self.state = self.CONNECTING
+        self.addr = addr
+        self._socket.bind(('', 0))
+        self.accepting = True
+        self.state = self.CONNECTING
+        # we need a peer to send data, but we remove it as soon as possible
+        peer = self._newPeer(self.addr)
+        peer.send(self.messageFactory.getByName('TConnectRequest')(protocol=PROTOCOL), reliable=True)
+        peer.pendingDisconnect = True
     
     def start(self):
         if not self.addr:
@@ -105,14 +114,18 @@ class Endpoint(object):
                 elif msg == 'TDisconnect':
                     self.onDisconnect(peer)
         self.sendOutgoingMessages()
+        self.removeDeadPeers()
     
     def send(self, msg, exclude=[], **flags):
         tmsg = TransportMessage(msg, self.nextOutgoingSequenceNumber, **flags)
-        if self.isClient:
-            self._newPeer(self.addr)
-        for _id, peer in list(self.peers.items())[:]:
-            if _id not in exclude:
-                peer._send(tmsg)
+        if self.active:
+            for _id, peer in list(self.peers.items())[:]:
+                if _id not in exclude:
+                    peer._send(tmsg)
+        else:
+            # we buffer the reliable messages until we have a connection
+            if tmsg.reliable:
+                self.bufferedMessages.append(tmsg)
     
     def _send(self, data, addr):
         self.bytesOut += self._socket.sendto(data, addr)
@@ -131,15 +144,12 @@ class Endpoint(object):
     def _newPeer(self, addr):
         peer = Peer(self, addr, self.nextPeerID)
         self.peers[peer.id] = peer
-        msg = self.messageFactory.getByName('TConnect')()
-        self._putMessage(msg, peer)
         return peer
     
     def _peerDisconnected(self, peer, pop=True):
         if pop:
             self.peers.pop(peer.id)
-        msg = self.messageFactory.getByName('TDisconnect')()
-        self._putMessage(msg, peer)
+        self._putMessage(self.messageFactory.getByName('TDisconnect')(), peer)
     
     def sendOutgoingMessages(self):
         for peer in list(self.peers.values())[:]:
@@ -151,6 +161,8 @@ class Endpoint(object):
             data, addr = self._read()
             peer = self.getPeerByAddr(addr)
             if not peer:
+                if not self.accepting:
+                    continue
                 peer = self._newPeer(addr)
             self._processData(data, peer)
     
@@ -172,6 +184,38 @@ class Endpoint(object):
     def _processMessage(self, tmsg, peer):
         if peer.processIncommingMessage(tmsg) == self.MESSAGE_UNHANDLED:
             self._putMessage(tmsg.msg, peer)
+    
+    def removeDeadPeers(self):
+        dead = []
+        for _id, peer in self.peers.items():
+            if peer.pendingDisconnect and not peer.outgoingMessages:
+                dead.append(_id)
+        for _id in dead:
+            self.peers.pop(_id)
+    
+    def processConnectRequest(self, msg, peer):
+        if self.isServer and self.state == self.LISTENING:
+            if msg.protocol == PROTOCOL:
+                peer.send(self.messageFactory.getByName('TConnectRequestAccepted')(), reliable=True)
+                self._putMessage(self.messageFactory.getByName('TConnect')(), peer)
+            else:
+                peer.send(self.messageFactory.getByName('TConnectRequestRejected')(), reliable=True)
+                peer.pendingDisconnect = True
+    
+    def processConnectRequestAccepted(self, peer):
+        if self.isClient and self.state == self.CONNECTING:
+            self.accepting = False
+            self.state = self.CONNECTED
+            self._putMessage(self.messageFactory.getByName('TConnect')(), peer)
+            # we have a connection, so we send the buffered messages
+            for tmsg in self.bufferedMessages:
+                peer._send(tmsg)
+    
+    def processConnectRequestRejected(self):
+        if self.isClient and self.state == self.CONNECTING:
+            self.accepting = False
+            self.state = self.DISCONNECTED
+            self._putMessage(self.messageFactory.getByName('TDisconnect')(), None)
     
     def getPeerByAddr(self, addr):
         for peer in self.peers.values():
@@ -203,10 +247,13 @@ class Peer(object):
         self.endpoint = endpoint
         self.addr = addr
         self.id = _id
-        self.latency = 1
+        
+        self.pendingDisconnect = False
+        
+        self.latency = 0.2
         
         # TransportMessages
-        self.outgoingMessages = []
+        self.outgoingMessages = deque()
         
         self.lastIncommingSequenceNumber = 0
         self.recentIncommingSequenceNumbers = []
@@ -241,6 +288,15 @@ class Peer(object):
         if msg == 'TAcknowledgement':
             if self._processAcknowledgement(msg.sequenceNumber):
                 return self.endpoint.MESSAGE_HANDLED
+        elif msg == 'TConnectRequest':
+            self.endpoint.processConnectRequest(msg, self)
+            return self.endpoint.MESSAGE_HANDLED
+        elif msg == 'TConnectRequestAccepted':
+            self.endpoint.processConnectRequestAccepted(self)
+            return self.endpoint.MESSAGE_HANDLED
+        elif msg == 'TConnectRequestRejected':
+            self.endpoint.processConnectRequestRejected()
+            return self.endpoint.MESSAGE_HANDLED
         return self.endpoint.MESSAGE_UNHANDLED
     
     def _processAcknowledgement(self, sequenceNumber):

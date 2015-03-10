@@ -112,7 +112,13 @@ class MessageFactory(object):
     def __init__(self):
         self.messagesByID = {}
         self.messagesByName = {}
-        self.add(TConnect, TDisconnect, TAcknowledgement)
+        self.add(
+            TConnect,
+            TDisconnect,
+            TConnectRequest,
+            TConnectRequestAccepted,
+            TConnectRequestRejected,
+            TAcknowledgement)
     
     def add(self, *classes):
         for clas in classes:
@@ -187,8 +193,20 @@ class TConnect(Message):
 class TDisconnect(Message):
     msgID = -2
 
-class TAcknowledgement(Message):
+class TConnectRequest(Message):
     msgID = -3
+    msgData = {
+        'protocol': ('int', 0)
+    }
+
+class TConnectRequestAccepted(Message):
+    msgID = -4
+
+class TConnectRequestRejected(Message):
+    msgID = -5
+
+class TAcknowledgement(Message):
+    msgID = -6
     msgData = {
         'sequenceNumber': ('int', 0)
     }
