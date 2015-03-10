@@ -20,13 +20,27 @@ if __name__ == '__main__':
     
     client.messageFactory.add(AMessage)
     
-    client.connect(('localhost', 55555))
+    def onMessage(msg, peer):
+        print(msg, peer)
+        if msg == 'AMessage':
+            print('It is an AMessage! :)')
+    client.onMessage.attach(onMessage)
+    
+    def onConnect(peer):
+        print('Connected:', peer)
+    client.onConnect.attach(onConnect)
+    
+    def onDisconnect(peer):
+        print('Disconnected', peer)
+    client.onDisconnect.attach(onDisconnect)
+    
+    client.connect(('127.0.0.1', 55555))
     client.start()
     
     msg = client.messageFactory.getByName('AMessage')()
     
     client.send(msg)
     
-    client.update()
-    
-    client.disconnect()
+    while True:
+        sleep(0.01)
+        client.update()

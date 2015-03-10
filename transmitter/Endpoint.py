@@ -1,11 +1,13 @@
 import socket
-from threading import Thread
+from threading import Thread, Lock
 import queue
 from collections import deque
+from time import time
 from transmitter.Event import Event
-from transmitter.Message import Message, MessageFactory
+from transmitter.Message import Message, MessageFactory, TransportMessage
 from transmitter.ByteBuffer import ByteBuffer
 from transmitter.Measurement import Measurement
+from transmitter.BitField import BitField
 
 import logging
 logger = logging.getLogger(__name__)
@@ -43,10 +45,13 @@ class Endpoint(object):
         self.messagesOut= Measurement()
         
         self.messageFactory = MessageFactory()
+        # NO TransportMessages
         self.receivedMessages = queue.Queue()
         self.onMessage = Event()
         self.onConnect = Event()
         self.onDisconnect = Event()
+        
+        self.lastOutgoingSequenceNumber = 0
     
     @property
     def active(self):
@@ -91,23 +96,23 @@ class Endpoint(object):
             next = self._nextMessage
             if not next:
                 break
+            msg, peer = next
+            if msg.msgID >= 0:
+                self.onMessage(msg, peer)
             else:
-                msg, peer = next
-                if msg.msgID >= 0:
-                    self.onMessage(msg, peer)
-                else:
-                    if msg == 'TConnect':
-                        self.onConnect(peer)
-                    elif msg == 'TDisconnect':
-                        self.onDisconnect(peer)
+                if msg == 'TConnect':
+                    self.onConnect(peer)
+                elif msg == 'TDisconnect':
+                    self.onDisconnect(peer)
         self.sendOutgoingMessages()
     
-    def send(self, message, exclude=[]):
+    def send(self, msg, exclude=[], **flags):
+        tmsg = TransportMessage(msg, self.nextOutgoingSequenceNumber, **flags)
         if self.isClient:
             self._newPeer(self.addr)
         for _id, peer in list(self.peers.items())[:]:
             if _id not in exclude:
-                peer.send(message)
+                peer._send(tmsg)
     
     def _send(self, data, addr):
         self.bytesOut += self._socket.sendto(data, addr)
@@ -152,13 +157,21 @@ class Endpoint(object):
     def _processData(self, data, peer):
         byteBuffer = ByteBuffer(data)
         while len(byteBuffer):
-            msg = self.messageFactory.readMessage(byteBuffer)
             self.messagesIn += 1
-            self._processMessage(msg, peer)
+            
+            sequenceNumber = byteBuffer.readStruct('Q')[0]
+            flags = BitField(byteBuffer.readStruct('B')[0])
+            msgID = byteBuffer.readStruct('l')[0]
+            msg = self.messageFactory.getByID(msgID)()
+            msg._readFromByteBuffer(byteBuffer)
+            tmsg = TransportMessage(msg, sequenceNumber)
+            tmsg.flags = flags
+            
+            self._processMessage(tmsg, peer)
     
-    def _processMessage(self, msg, peer):
-        if peer.processIncommingMessage(msg) == self.MESSAGE_UNHANDLED:
-            self._putMessage(msg, peer)
+    def _processMessage(self, tmsg, peer):
+        if peer.processIncommingMessage(tmsg) == self.MESSAGE_UNHANDLED:
+            self._putMessage(tmsg.msg, peer)
     
     def getPeerByAddr(self, addr):
         for peer in self.peers.values():
@@ -179,54 +192,99 @@ class Endpoint(object):
     def nextPeerID(self):
         self._lastPeerID += 1
         return self._lastPeerID
+    
+    @property
+    def nextOutgoingSequenceNumber(self):
+        self.lastOutgoingSequenceNumber += 1
+        return self.lastOutgoingSequenceNumber
 
 class Peer(object):
     def __init__(self, endpoint, addr, _id):
         self.endpoint = endpoint
         self.addr = addr
         self.id = _id
-        self.active = True
+        self.latency = 1
         
-        self.outgoingMessages = deque()
+        # TransportMessages
+        self.outgoingMessages = []
+        
+        self.lastIncommingSequenceNumber = 0
+        self.recentIncommingSequenceNumbers = []
     
-    def send(self, message):
-        if self.active:
-            self.outgoingMessages.append(message)
+    def send(self, msg, **flags):
+        tmsg = TransportMessage(msg, self.endpoint.nextOutgoingSequenceNumber, **flags)
+        self._send(tmsg)
+    
+    def _send(self, tmsg):
+        self.outgoingMessages.append(tmsg)
     
     def disconnect(self, pop=True):
-        self.active = False
         self.endpoint._peerDisconnected(self, pop)
+    
+    def processIncommingMessage(self, tmsg):
+        self.recentIncommingSequenceNumbers = \
+            self.recentIncommingSequenceNumbers[-1000:]
+        if tmsg.sequenceNumber in self.recentIncommingSequenceNumbers:
+            # message received twice, discard it
+            return self.endpoint.MESSAGE_HANDLED
+        self.recentIncommingSequenceNumbers.append(tmsg.sequenceNumber)
+        if tmsg.reliable:
+            # message requires acknowledgement
+            self.send(self.endpoint.messageFactory.getByName(
+                'TAcknowledgement')(sequenceNumber=tmsg.sequenceNumber))
+        if tmsg.ordered and tmsg.sequenceNumber < self.lastIncommingSequenceNumber:
+            # newer message was received, discard it
+            # nevertheless, the acknownledgement might be sent
+            return self.endpoint.MESSAGE_HANDLED
+        
+        msg = tmsg.msg
+        if msg == 'TAcknowledgement':
+            if self._processAcknowledgement(msg.sequenceNumber):
+                return self.endpoint.MESSAGE_HANDLED
+        return self.endpoint.MESSAGE_UNHANDLED
+    
+    def _processAcknowledgement(self, sequenceNumber):
+        for tmsg in self.outgoingMessages:
+            if tmsg.sequenceNumber == sequenceNumber:
+                self.outgoingMessages.remove(tmsg)
+                return True
+        return False
     
     @property
     def outgoingPackets(self):
         buf = b''
         size = 0
         sentMessages = []
-        for msg in self.outgoingMessages:
-            l = len(msg)
+        t = time()
+        for tmsg in self.outgoingMessages:
+            if tmsg.lastSendAttempt + self.latency >= t:
+                # msg cant be sent, we are waiting for acknowledgement
+                continue
+            tmsg.lastSendAttempt = t
+            l = len(tmsg.bytes)
             if l > self.endpoint.mtu:
                 logger.error('Message bigger than MTU! -- discarding')
+                sentMessages.append(tmsg)
+                continue
             elif size + l >= self.endpoint.mtu:
+                # message doesnt fit in packet
                 # send the packet
                 yield buf
-                # 'append' message to new buffer
-                buf = msg._bytes
-                size = l
-            else:
-                # append message to buffer
-                buf += msg._bytes
-                size += l
-            sentMessages.append(msg)
+                # make new buffer
+                buf = b''
+                size = 0
+            # append message to buffer
+            buf += tmsg.bytes
+            size += l
+            self.endpoint.messagesOut += 1
+            if not tmsg.reliable:
+                sentMessages.append(tmsg)
         
         if buf:
             yield buf
         
-        for msg in sentMessages:
-            self.outgoingMessages.remove(msg)
-            self.endpoint.messagesOut += 1
-    
-    def processIncommingMessage(self, msg):
-        return self.endpoint.MESSAGE_UNHANDLED
+        for tmsg in sentMessages:
+            self.outgoingMessages.remove(tmsg)
     
     def __repr__(self):
-        return '<Peer id={} addr={} act={}>'.format(self.id, self.addr, self.active)
+        return '<Peer id={} addr={}>'.format(self.id, self.addr)

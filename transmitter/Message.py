@@ -13,6 +13,7 @@ class Message(object):
     # Use normal API to modify message instances
     msgID = 0
     msgReliable = False
+    msgOrdered = False
     msgData = {
         #'name': ('type', '(default)value')
     }
@@ -21,18 +22,8 @@ class Message(object):
     # cache bytes
     _bytesCached = b''
     _factory = None
-    _flags = BitField()
-    
-    @property
-    def reliable(self):
-        return self._flags[0]
-    @reliable.setter
-    def reliable(self, value):
-        self._emptyCache()
-        self._flags[0] = value
     
     def __init__(self, **data):
-        self.reliable = self.msgReliable
         for key, value in data.items():
             self.__setattr__(key, value)
     
@@ -51,9 +42,6 @@ class Message(object):
             self._emptyCache()
             self.msgData[name] = (t, value)
     
-    def __len__(self):
-        return len(self._bytes)
-    
     def _items(self):
         """Provides iterator access to msgData in sorted key order"""
         # data have to be accessed sorted, because dict's key order is undefined !!
@@ -71,8 +59,8 @@ class Message(object):
         self._bytesCached = b''
     
     def _getBytes(self):
-        format = '!lB'
-        values = [self.msgID, self._flags]
+        format = '!l'
+        values = [self.msgID]
         for k, v in self._items():
             t = v[0]
             v = v[1]
@@ -93,7 +81,6 @@ class Message(object):
     
     def _readFromByteBuffer(self, byteBuffer):
         # msgID is read by factory
-        self._flags = BitField(byteBuffer.readStruct('B')[0])
         for k, v in self._items():
             t = v[0]
             if t == 'int':      self.__setattr__(k, byteBuffer.readStruct('l')[0])
@@ -121,6 +108,7 @@ class Message(object):
 
 class MessageFactory(object):
     """A class that holds all the Message classes which can be received from the network"""
+    
     def __init__(self):
         self.messagesByID = {}
         self.messagesByName = {}
@@ -156,15 +144,42 @@ class MessageFactory(object):
     
     def isA(self, message, name):
         return isinstance(message, self.getByName(name))
-    
-    def readMessage(self, byteBuffer):
-        msgID = byteBuffer.readStruct('l')[0]
-        msg = self.getByID(msgID)()
-        msg._readFromByteBuffer(byteBuffer)
-        return msg
 
-# System messages
-###################
+class TransportMessage(object):
+    """Wrapper for a Message. Stores transport related information."""
+    def __init__(self, msg, sequenceNumber=0, **flags):
+        self.msg = msg
+        self.flags = BitField()
+        self.reliable = flags.get('reliable', self.msg.msgReliable)
+        self.ordered = flags.get('ordered', self.msg.msgOrdered)
+        self.sequenceNumber = sequenceNumber
+        self.lastSendAttempt = 0
+        self._cache = b''
+    
+    @property
+    def bytes(self):
+        if not self._cache:
+            self._cache = struct.pack('!QB', self.sequenceNumber, self.flags) + self.msg._bytes
+        return self._cache
+    
+    @property
+    def reliable(self):
+        return self.flags[0]
+    @reliable.setter
+    def reliable(self, value):
+        self._cache = b''
+        self.flags[0] = value
+    
+    @property
+    def ordered(self):
+        return self.flags[1]
+    @ordered.setter
+    def ordered(self, value):
+        self._cache = b''
+        self.flags[1] = value
+    
+    def __repr__(self):
+        return '<TransportMessage seqN={} flags={} msg={}>'.format(self.sequenceNumber, self.flags, self.msg)
 
 class TConnect(Message):
     msgID = -1
@@ -174,3 +189,6 @@ class TDisconnect(Message):
 
 class TAcknowledgement(Message):
     msgID = -3
+    msgData = {
+        'sequenceNumber': ('int', 0)
+    }
