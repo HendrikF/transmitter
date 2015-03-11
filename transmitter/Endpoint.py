@@ -7,6 +7,7 @@ from transmitter.Event import Event
 from transmitter.Message import Message, MessageFactory, TransportMessage
 from transmitter.ByteBuffer import ByteBuffer
 from transmitter.Measurement import Measurement
+from transmitter.PingSampler import PingSampler
 from transmitter.BitField import BitField
 
 import logging
@@ -195,15 +196,19 @@ class Endpoint(object):
     
     def processConnectRequest(self, msg, peer):
         if self.isServer and self.state == self.LISTENING:
+            logger.debug('Received ConnectRequest: %s %s', msg, peer)
             if msg.protocol == PROTOCOL:
                 peer.send(self.messageFactory.getByName('TConnectRequestAccepted')(), reliable=True)
+                logger.info('Accepting Request')
                 self._putMessage(self.messageFactory.getByName('TConnect')(), peer)
             else:
                 peer.send(self.messageFactory.getByName('TConnectRequestRejected')(), reliable=True)
+                logger.info('Rejecting Request: msg: %s our: %s', msg.protocol, PROTOCOL)
                 peer.pendingDisconnect = True
     
     def processConnectRequestAccepted(self, peer):
         if self.isClient and self.state == self.CONNECTING:
+            logger.info('Server accepted connection')
             self.accepting = False
             self.state = self.CONNECTED
             self._putMessage(self.messageFactory.getByName('TConnect')(), peer)
@@ -213,6 +218,7 @@ class Endpoint(object):
     
     def processConnectRequestRejected(self):
         if self.isClient and self.state == self.CONNECTING:
+            logger.info('Server rejected connection')
             self.accepting = False
             self.state = self.DISCONNECTED
             self._putMessage(self.messageFactory.getByName('TDisconnect')(), None)
@@ -251,6 +257,7 @@ class Peer(object):
         self.pendingDisconnect = False
         
         self.latency = 0.2
+        self.pingSampler = PingSampler()
         
         # TransportMessages
         self.outgoingMessages = deque()
@@ -269,25 +276,30 @@ class Peer(object):
         self.endpoint._peerDisconnected(self, pop)
     
     def processIncommingMessage(self, tmsg):
+        if tmsg.reliable:
+            # message requires acknowledgement
+            logger.debug('Acking: %s', tmsg)
+            self.send(self.endpoint.messageFactory.getByName(
+                'TAcknowledgement')(sequenceNumber=tmsg.sequenceNumber))
         self.recentIncommingSequenceNumbers = \
             self.recentIncommingSequenceNumbers[-1000:]
         if tmsg.sequenceNumber in self.recentIncommingSequenceNumbers:
             # message received twice, discard it
+            logger.info('Message received twice - discarding it: %s', tmsg)
             return self.endpoint.MESSAGE_HANDLED
         self.recentIncommingSequenceNumbers.append(tmsg.sequenceNumber)
-        if tmsg.reliable:
-            # message requires acknowledgement
-            self.send(self.endpoint.messageFactory.getByName(
-                'TAcknowledgement')(sequenceNumber=tmsg.sequenceNumber))
         if tmsg.ordered and tmsg.sequenceNumber < self.lastIncommingSequenceNumber:
             # newer message was received, discard it
             # nevertheless, the acknownledgement might be sent
+            logger.info('Discarding late ordered message: %s', tmsg)
             return self.endpoint.MESSAGE_HANDLED
         
         msg = tmsg.msg
         if msg == 'TAcknowledgement':
             if self._processAcknowledgement(msg.sequenceNumber):
+                logger.debug('Received correct Ack: %s', tmsg)
                 return self.endpoint.MESSAGE_HANDLED
+            logger.debug('Could not process Ack: %s', tmsg)
         elif msg == 'TConnectRequest':
             self.endpoint.processConnectRequest(msg, self)
             return self.endpoint.MESSAGE_HANDLED
