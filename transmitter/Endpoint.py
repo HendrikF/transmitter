@@ -39,6 +39,10 @@ class Endpoint(object):
         
         self.state = self.DISCONNECTED
         self.mtu = 1400
+        self.timeout = 10
+        self.pingInterval = 2
+        
+        self.pendingDisconnect = False
         
         self.bytesIn    = Measurement()
         self.bytesOut   = Measurement()
@@ -53,7 +57,9 @@ class Endpoint(object):
         self.onMessage = Event()
         self.onConnect = Event()
         self.onDisconnect = Event()
+        self.onTimeout = Event()
         
+        # we have one temporary peer at client to send connect request
         self.lastOutgoingSequenceNumber = -1 if self.isClient else 0
         
         # TransportMessages
@@ -62,6 +68,10 @@ class Endpoint(object):
     @property
     def active(self):
         return self.state in [self.LISTENING, self.CONNECTED]
+    
+    @property
+    def latency(self):
+        return self.peers[self._lastPeerID].latency
     
     def bind(self, addr):
         self.addr = addr
@@ -89,9 +99,8 @@ class Endpoint(object):
     def disconnect(self):
         self.accepting = False
         for peer in list(self.peers.values())[:]:
-            peer.disconnect(pop=False)
-        self.peers = {}
-        self._socket.close()
+            peer.disconnect()
+        self.pendingDisconnect = True
     
     @property
     def _nextMessage(self):
@@ -114,8 +123,13 @@ class Endpoint(object):
                     self.onConnect(peer)
                 elif msg == 'TDisconnect':
                     self.onDisconnect(peer)
-        self.sendOutgoingMessages()
+                elif msg == 'TTimeout':
+                    self.onTimeout(peer)
         self.removeDeadPeers()
+        self.updatePeers()
+        self.sendOutgoingMessages()
+        if self.pendingDisconnect and not self.peers:
+            self._socket.close()
     
     def send(self, msg, exclude=[], **flags):
         tmsg = TransportMessage(msg, self.nextOutgoingSequenceNumber, **flags)
@@ -147,15 +161,14 @@ class Endpoint(object):
         self.peers[peer.id] = peer
         return peer
     
-    def _peerDisconnected(self, peer, pop=True):
-        if pop:
-            self.peers.pop(peer.id)
-        self._putMessage(self.messageFactory.getByName('TDisconnect')(), peer)
-    
     def sendOutgoingMessages(self):
         for peer in list(self.peers.values())[:]:
             for packet in peer.outgoingPackets:
                 self._send(packet, peer.addr)
+    
+    def updatePeers(self):
+        for peer in list(self.peers.values())[:]:
+            peer.update()
     
     def _receive(self):
         while True:
@@ -223,6 +236,12 @@ class Endpoint(object):
             self.state = self.DISCONNECTED
             self._putMessage(self.messageFactory.getByName('TDisconnect')(), None)
     
+    def _peerTimeout(self, peer):
+        self._putMessage(self.messageFactory.getByName('TTimeout')(), peer)
+    
+    def _peerDisconnect(self, peer):
+        self._putMessage(self.messageFactory.getByName('TDisconnect')(), peer)
+    
     def getPeerByAddr(self, addr):
         for peer in self.peers.values():
             if peer.addr == addr:
@@ -256,31 +275,44 @@ class Peer(object):
         
         self.pendingDisconnect = False
         
-        self.latency = 0.2
-        self.pingSampler = PingSampler()
+        self.pingSampler = PingSampler(0.2)
+        self.lastPingTime = 0
+        self.lastPingNumber = 0
         
         # TransportMessages
         self.outgoingMessages = deque()
         
         self.lastIncommingSequenceNumber = 0
         self.recentIncommingSequenceNumbers = []
+        
+        self.lastReceiveTime = 0
+    
+    @property
+    def latency(self):
+        return self.pingSampler.average
     
     def send(self, msg, **flags):
         tmsg = TransportMessage(msg, self.endpoint.nextOutgoingSequenceNumber, **flags)
         self._send(tmsg)
     
     def _send(self, tmsg):
-        self.outgoingMessages.append(tmsg)
+        if not self.pendingDisconnect:
+            self.outgoingMessages.append(tmsg)
     
-    def disconnect(self, pop=True):
-        self.endpoint._peerDisconnected(self, pop)
+    def disconnect(self):
+        self.send(self.endpoint.messageFactory.getByName('TDisconnect')())
+        self.pendingDisconnect = True
+        self.endpoint._peerDisconnect(self)
     
     def processIncommingMessage(self, tmsg):
+        self.lastReceiveTime = time()
+        
         if tmsg.reliable:
             # message requires acknowledgement
             logger.debug('Acking: %s', tmsg)
             self.send(self.endpoint.messageFactory.getByName(
                 'TAcknowledgement')(sequenceNumber=tmsg.sequenceNumber))
+        
         self.recentIncommingSequenceNumbers = \
             self.recentIncommingSequenceNumbers[-1000:]
         if tmsg.sequenceNumber in self.recentIncommingSequenceNumbers:
@@ -288,6 +320,7 @@ class Peer(object):
             logger.info('Message received twice - discarding it: %s', tmsg)
             return self.endpoint.MESSAGE_HANDLED
         self.recentIncommingSequenceNumbers.append(tmsg.sequenceNumber)
+        
         if tmsg.ordered and tmsg.sequenceNumber < self.lastIncommingSequenceNumber:
             # newer message was received, discard it
             # nevertheless, the acknownledgement might be sent
@@ -295,21 +328,35 @@ class Peer(object):
             return self.endpoint.MESSAGE_HANDLED
         
         msg = tmsg.msg
+        
         if msg == 'TAcknowledgement':
             if self._processAcknowledgement(msg.sequenceNumber):
                 logger.debug('Received correct Ack: %s', tmsg)
-                return self.endpoint.MESSAGE_HANDLED
-            logger.debug('Could not process Ack: %s', tmsg)
+            else:
+                logger.debug('Could not process Ack: %s', tmsg)
+        
         elif msg == 'TConnectRequest':
             self.endpoint.processConnectRequest(msg, self)
-            return self.endpoint.MESSAGE_HANDLED
         elif msg == 'TConnectRequestAccepted':
             self.endpoint.processConnectRequestAccepted(self)
-            return self.endpoint.MESSAGE_HANDLED
         elif msg == 'TConnectRequestRejected':
             self.endpoint.processConnectRequestRejected()
-            return self.endpoint.MESSAGE_HANDLED
-        return self.endpoint.MESSAGE_UNHANDLED
+        
+        elif msg == 'TPing':
+            self.send(self.endpoint.messageFactory.getByName('TPong')(pingNumber=msg.pingNumber))
+        elif msg == 'TPong':
+            if msg.pingNumber == self.lastPingNumber:
+                self.pingSampler += time() - self.lastPingTime
+        
+        elif msg == 'TDisconnect':
+            self.pendingDisconnect = True
+            self.outgoingMessages.clear()
+            self.endpoint._peerDisconnect(self)
+        
+        else:
+            return self.endpoint.MESSAGE_UNHANDLED
+        
+        return self.endpoint.MESSAGE_HANDLED
     
     def _processAcknowledgement(self, sequenceNumber):
         for tmsg in self.outgoingMessages:
@@ -325,7 +372,7 @@ class Peer(object):
         sentMessages = []
         t = time()
         for tmsg in self.outgoingMessages:
-            if tmsg.lastSendAttempt + self.latency >= t:
+            if tmsg.lastSendAttempt + self.pingSampler.average >= t:
                 # msg cant be sent, we are waiting for acknowledgement
                 continue
             tmsg.lastSendAttempt = t
@@ -353,6 +400,23 @@ class Peer(object):
         
         for tmsg in sentMessages:
             self.outgoingMessages.remove(tmsg)
+    
+    def update(self):
+        if self.pendingDisconnect:
+            return
+        t = time()
+        if t > self.lastPingTime + self.endpoint.pingInterval:
+            self.lastPingNumber += 1
+            self.lastPingTime = t
+            self.send(self.endpoint.messageFactory.getByName('TPing')(pingNumber=self.lastPingNumber))
+        
+        if self.lastReceiveTime == 0:
+            self.lastReceiveTime = t
+        elif t > self.lastReceiveTime + self.endpoint.timeout:
+            self.pendingDisconnect = True
+            # reliable messages will not get acknowledged, so remove all
+            self.outgoingMessages.clear()
+            self.endpoint._peerTimeout(self)
     
     def __repr__(self):
         return '<Peer id={} addr={}>'.format(self.id, self.addr)

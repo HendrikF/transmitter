@@ -1,9 +1,9 @@
 class PingSampler(object):
-    def __init__(self, numSamples=5):
+    def __init__(self, *args, numSamples=5):
         if numSamples <= 0:
             raise ValueError('numSamples must be a positive integer')
         self.numSamples = int(numSamples)
-        self.samples = []
+        self.samples = list(args)
     
     def __len__(self):
         return len(self.samples)

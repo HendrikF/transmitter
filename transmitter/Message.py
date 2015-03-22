@@ -118,7 +118,11 @@ class MessageFactory(object):
             TConnectRequest,
             TConnectRequestAccepted,
             TConnectRequestRejected,
-            TAcknowledgement)
+            TAcknowledgement,
+            TPing,
+            TPong,
+            TTimeout,
+            )
     
     def add(self, *classes):
         for clas in classes:
@@ -210,3 +214,18 @@ class TAcknowledgement(Message):
     msgData = {
         'sequenceNumber': ('int', 0)
     }
+
+class TPing(Message):
+    msgID = -7
+    msgData = {
+        'pingNumber': ('int', 0)
+    }
+
+class TPong(Message):
+    msgID = -8
+    msgData = {
+        'pingNumber': ('int', 0)
+    }
+
+class TTimeout(Message):
+    msgID = -9
