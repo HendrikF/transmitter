@@ -43,7 +43,7 @@ if __name__ == '__main__':
     server.messageFactory.add(AMessage)
     
     # attach an event handler
-    # possible events are onConnect(peer), onMessage(msg, peer), onDisconnect(peer)
+    # possible events are onConnect(peer), onMessage(msg, peer), onDisconnect(peer), onTimeout(peer)
     def onMessage(msg, peer):
         print(msg, peer)
         # check for a message type
@@ -58,7 +58,7 @@ if __name__ == '__main__':
     
     while True:
         sleep(0.01)
-        # update() calls the onMessage, onConnect, onDisconnect events on the server
+        # update() calls the onMessage, onConnect, onDisconnect, onTimeout events on the server
         # so the events run on the same (main) thread
         server.update()
 ```
@@ -99,6 +99,7 @@ if __name__ == '__main__':
     # You have to call client.update() to send them
     
     # Call client.update() regularly to receive Messages from the server
+    # Call to ensure transmission of reliable messages
     client.update()
     
     client.stop()
