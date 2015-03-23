@@ -24,6 +24,10 @@ if __name__ == '__main__':
         print('Disconnected', peer)
     server.onDisconnect.attach(onDisconnect)
     
+    def onTimeout(peer):
+        print('Timed out', peer)
+    server.onTimeout.attach(onTimeout)
+    
     server.bind(('', 55555))
     server.start()
     

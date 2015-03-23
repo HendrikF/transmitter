@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-from time import sleep
+from time import sleep, time
 from transmitter.general import Client
 from transmitter.Message import Message
 
@@ -13,6 +13,14 @@ class AMessage(Message):
         'float': ('float', 9.76),
         'boolean': ('bool', True)
     }
+
+lastPrint = time()
+def _print(*x):
+    global lastPrint
+    if lastPrint + 0.5 < time():
+        lastPrint = time()
+        print('\r', end='')
+        print(*x, end='')
 
 if __name__ == '__main__':
     
@@ -32,6 +40,10 @@ if __name__ == '__main__':
         print('Disconnected', peer)
     client.onDisconnect.attach(onDisconnect)
     
+    def onTimeout(peer):
+        print('Timed out', peer)
+    client.onTimeout.attach(onTimeout)
+    
     client.connect(('localhost', 55555))
     client.start()
     
@@ -39,6 +51,12 @@ if __name__ == '__main__':
     
     client.send(msg)
     
-    while True:
-        sleep(0.01)
+    try:
+        while True:
+            sleep(0.01)
+            client.update()
+            _print('Latency:', client.latency)
+    except KeyboardInterrupt:
+        client.disconnect()
         client.update()
+        raise

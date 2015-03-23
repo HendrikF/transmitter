@@ -32,7 +32,8 @@ class Endpoint(object):
         self.accepting = False
         self._socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.peers = {}
-        self._lastPeerID = 0
+        # we have one temporary peer at client to send connect request
+        self._lastPeerID = -1 if self.isClient else 0
         self.addr = None
         
         self._receivingThread = None
@@ -59,8 +60,7 @@ class Endpoint(object):
         self.onDisconnect = Event()
         self.onTimeout = Event()
         
-        # we have one temporary peer at client to send connect request
-        self.lastOutgoingSequenceNumber = -1 if self.isClient else 0
+        self.lastOutgoingSequenceNumber = 0
         
         # TransportMessages
         self.bufferedMessages = deque()
@@ -71,7 +71,12 @@ class Endpoint(object):
     
     @property
     def latency(self):
-        return self.peers[self._lastPeerID].latency
+        # Makes only sense at client!
+        try:
+            # SHOULD be the server connection
+            return self.peers[self._lastPeerID].latency
+        except KeyError:
+            return 0
     
     def bind(self, addr):
         self.addr = addr
@@ -223,6 +228,10 @@ class Endpoint(object):
         if self.isClient and self.state == self.CONNECTING:
             logger.info('Server accepted connection')
             self.accepting = False
+            try:
+                self.peers[self._lastPeerID-1].outgoingMessages.clear()
+            except KeyError:
+                pass
             self.state = self.CONNECTED
             self._putMessage(self.messageFactory.getByName('TConnect')(), peer)
             # we have a connection, so we send the buffered messages
@@ -233,6 +242,11 @@ class Endpoint(object):
         if self.isClient and self.state == self.CONNECTING:
             logger.info('Server rejected connection')
             self.accepting = False
+            try:
+                self.peers[self._lastPeerID].pendingDisconnect = True
+                self.peers[self._lastPeerID-1].outgoingMessages.clear()
+            except KeyError:
+                pass
             self.state = self.DISCONNECTED
             self._putMessage(self.messageFactory.getByName('TDisconnect')(), None)
     
