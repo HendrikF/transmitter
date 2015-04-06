@@ -199,15 +199,18 @@ class TDisconnect(Message):
 
 class TConnectRequest(Message):
     msgID = -3
+    msgReliable = True
     msgData = {
         'protocol': ('int', 0)
     }
 
 class TConnectRequestAccepted(Message):
     msgID = -4
+    msgReliable = True
 
 class TConnectRequestRejected(Message):
     msgID = -5
+    msgReliable = True
 
 class TAcknowledgement(Message):
     msgID = -6

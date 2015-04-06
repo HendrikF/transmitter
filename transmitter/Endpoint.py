@@ -32,8 +32,8 @@ class Endpoint(object):
         self.accepting = False
         self._socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.peers = {}
-        # we have one temporary peer at client to send connect request
-        self._lastPeerID = -1 if self.isClient else 0
+        self.connectPeer = None
+        self._lastPeerID =  0
         self.addr = None
         
         self._receivingThread = None
@@ -71,9 +71,8 @@ class Endpoint(object):
     
     @property
     def latency(self):
-        # Makes only sense at client!
+        # Only works at client!
         try:
-            # SHOULD be the server connection
             return self.peers[self._lastPeerID].latency
         except KeyError:
             return 0
@@ -90,9 +89,8 @@ class Endpoint(object):
         self.accepting = True
         self.state = self.CONNECTING
         # we need a peer to send data, but we remove it as soon as possible
-        peer = self._newPeer(self.addr)
-        peer.send(self.messageFactory.getByName('TConnectRequest')(protocol=PROTOCOL), reliable=True)
-        peer.pendingDisconnect = True
+        self.connectPeer = self._newPeer(self.addr, append=False)
+        self.connectPeer.send(self.messageFactory.getByName('TConnectRequest')(protocol=PROTOCOL))
     
     def start(self):
         if not self.addr:
@@ -105,20 +103,18 @@ class Endpoint(object):
         self.accepting = False
         for peer in list(self.peers.values())[:]:
             peer.disconnect()
-        self.pendingDisconnect = True
-    
-    @property
-    def _nextMessage(self):
         try:
-            return self.receivedMessages.get(False)
-        except queue.Empty:
-            return None
+            self.connectPeer.disconnect()
+        except AttributeError:
+            pass
+        self.pendingDisconnect = True
     
     def update(self):
         """Call this method regularly"""
         while True:
-            next = self._nextMessage
-            if not next:
+            try:
+                next = self.receivedMessages.get(False)
+            except queue.Empty:
                 break
             msg, peer = next
             if msg.msgID >= 0:
@@ -161,19 +157,26 @@ class Endpoint(object):
     def _putMessage(self, msg, peer):
         self.receivedMessages.put((msg, peer), False)
     
-    def _newPeer(self, addr):
+    def _newPeer(self, addr, append=True):
         peer = Peer(self, addr, self.nextPeerID)
-        self.peers[peer.id] = peer
+        if append:
+            self.peers[peer.id] = peer
         return peer
     
     def sendOutgoingMessages(self):
-        for peer in list(self.peers.values())[:]:
-            for packet in peer.outgoingPackets:
-                self._send(packet, peer.addr)
+        for peer in list(self.peers.values())[:]+[self.connectPeer]:
+            try:
+                for packet in peer.outgoingPackets:
+                    self._send(packet, peer.addr)
+            except AttributeError:
+                pass
     
     def updatePeers(self):
-        for peer in list(self.peers.values())[:]:
-            peer.update()
+        for peer in list(self.peers.values())[:]+[self.connectPeer]:
+            try:
+                peer.update()
+            except AttributeError:
+                pass
     
     def _receive(self):
         while True:
@@ -216,11 +219,11 @@ class Endpoint(object):
         if self.isServer and self.state == self.LISTENING:
             logger.debug('Received ConnectRequest: %s %s', msg, peer)
             if msg.protocol == PROTOCOL:
-                peer.send(self.messageFactory.getByName('TConnectRequestAccepted')(), reliable=True)
+                peer.send(self.messageFactory.getByName('TConnectRequestAccepted')())
                 logger.info('Accepting Request')
                 self._putMessage(self.messageFactory.getByName('TConnect')(), peer)
             else:
-                peer.send(self.messageFactory.getByName('TConnectRequestRejected')(), reliable=True)
+                peer.send(self.messageFactory.getByName('TConnectRequestRejected')())
                 logger.info('Rejecting Request: msg: %s our: %s', msg.protocol, PROTOCOL)
                 peer.pendingDisconnect = True
     
@@ -228,10 +231,7 @@ class Endpoint(object):
         if self.isClient and self.state == self.CONNECTING:
             logger.info('Server accepted connection')
             self.accepting = False
-            try:
-                self.peers[self._lastPeerID-1].outgoingMessages.clear()
-            except KeyError:
-                pass
+            self.connectPeer = None
             self.state = self.CONNECTED
             self._putMessage(self.messageFactory.getByName('TConnect')(), peer)
             # we have a connection, so we send the buffered messages
@@ -242,11 +242,8 @@ class Endpoint(object):
         if self.isClient and self.state == self.CONNECTING:
             logger.info('Server rejected connection')
             self.accepting = False
-            try:
-                self.peers[self._lastPeerID].pendingDisconnect = True
-                self.peers[self._lastPeerID-1].outgoingMessages.clear()
-            except KeyError:
-                pass
+            self.peers = {}
+            self.connectPeer = None
             self.state = self.DISCONNECTED
             self._putMessage(self.messageFactory.getByName('TDisconnect')(), None)
     
