@@ -12,6 +12,8 @@ if __name__ == '__main__':
     
     def onMessage(msg, peer):
         print(msg, peer)
+        if msg == 'AMessage':
+            print('It is an AMessage! :)')
     server.onMessage.attach(onMessage)
     
     def onConnect(peer):
@@ -22,9 +24,18 @@ if __name__ == '__main__':
         print('Disconnected', peer)
     server.onDisconnect.attach(onDisconnect)
     
-    server.bind('', 55555)
+    def onTimeout(peer):
+        print('Timed out', peer)
+    server.onTimeout.attach(onTimeout)
+    
+    server.bind(('', 55555))
     server.start()
     
-    while True:
-        sleep(0.01)
+    try:
+        while True:
+            sleep(0.01)
+            server.update()
+    except KeyboardInterrupt:
+        server.disconnect()
         server.update()
+        raise
