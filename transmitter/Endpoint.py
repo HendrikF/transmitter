@@ -33,7 +33,7 @@ class Endpoint(object):
         self._socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.peers = {}
         self.connectPeer = None
-        self._lastPeerID =  0
+        self._lastPeerID = -1 if self.isClient else 0
         self.addr = None
         
         self._receivingThread = None
@@ -108,6 +108,7 @@ class Endpoint(object):
         except AttributeError:
             pass
         self.pendingDisconnect = True
+        self.state = self.DISCONNECTED
     
     def update(self):
         """Call this method regularly"""
@@ -243,15 +244,20 @@ class Endpoint(object):
             logger.info('Server rejected connection')
             self.accepting = False
             self.peers = {}
+            self._lastPeerID = -1
             self.connectPeer = None
             self.state = self.DISCONNECTED
             self._putMessage(self.messageFactory.getByName('TDisconnect')(), None)
     
     def _peerTimeout(self, peer):
         self._putMessage(self.messageFactory.getByName('TTimeout')(), peer)
+        if self.isClient:
+            self.state = self.DISCONNECTED
     
     def _peerDisconnect(self, peer):
         self._putMessage(self.messageFactory.getByName('TDisconnect')(), peer)
+        if self.isClient:
+            self.state = self.DISCONNECTED
     
     def getPeerByAddr(self, addr):
         for peer in self.peers.values():

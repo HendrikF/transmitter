@@ -31,6 +31,11 @@ if __name__ == '__main__':
     server.bind(('', 55555))
     server.start()
     
-    while True:
-        sleep(0.01)
+    try:
+        while True:
+            sleep(0.01)
+            server.update()
+    except KeyboardInterrupt:
+        server.disconnect()
         server.update()
+        raise
