@@ -94,15 +94,17 @@ if __name__ == '__main__':
     msg = client.messageFactory.getByName('AMessage')()
     msg.bytes = b'All message data can be assigned that way'
     
-    # This internally buffers the messages
-    client.send(msg)
+    # This internally only buffers the messages
     # You have to call client.update() to send them
+    client.send(msg)
     
     # Call client.update() regularly to receive Messages from the server
-    # Call to ensure transmission of reliable messages
+    # Call to ensure transmission of messages
     client.update()
     
-    client.stop()
+    client.disconnect()
+    # Call update to send Disconnect message
+    client.update()
 ```
 
 Also see files `example*.py`.
