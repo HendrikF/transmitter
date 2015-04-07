@@ -103,10 +103,6 @@ class Endpoint(object):
         self.accepting = False
         for peer in list(self.peers.values())[:]:
             peer.disconnect()
-        try:
-            self.connectPeer.disconnect()
-        except AttributeError:
-            pass
         self.pendingDisconnect = True
         self.state = self.DISCONNECTED
     
