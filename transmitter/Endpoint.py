@@ -110,10 +110,9 @@ class Endpoint(object):
         """Call this method regularly"""
         while True:
             try:
-                next = self.receivedMessages.get(False)
+                msg, peer = self.receivedMessages.get(False)
             except queue.Empty:
                 break
-            msg, peer = next
             if msg.msgID >= 0:
                 self.onMessage(msg, peer)
             else:
@@ -294,6 +293,10 @@ class Peer(object):
         
         # TransportMessages
         self.outgoingMessages = deque()
+        self.newMessages = queue.Queue()
+        # SequenceNumbers
+        self.receivedAcknowledgements = queue.Queue()
+        # Queue because we access it from multiple threads
         
         self.lastIncommingSequenceNumber = 0
         self.recentIncommingSequenceNumbers = []
@@ -310,7 +313,13 @@ class Peer(object):
     
     def _send(self, tmsg):
         if not self.pendingDisconnect:
-            self.outgoingMessages.append(tmsg)
+            self.newMessages.put(tmsg, False)
+    
+    def _sendAcknowledgement(self, sequenceNumber):
+        msg = self.endpoint.messageFactory.getByName(
+            'TAcknowledgement')(sequenceNumber=sequenceNumber)
+        tmsg = TransportMessage(msg, self.endpoint.nextOutgoingSequenceNumber)
+        self.newMessages.put(tmsg, False)
     
     def disconnect(self):
         self.send(self.endpoint.messageFactory.getByName('TDisconnect')())
@@ -323,8 +332,7 @@ class Peer(object):
         if tmsg.reliable:
             # message requires acknowledgement
             logger.debug('Acking: %s', tmsg)
-            self.send(self.endpoint.messageFactory.getByName(
-                'TAcknowledgement')(sequenceNumber=tmsg.sequenceNumber))
+            self._sendAcknowledgement(tmsg.sequenceNumber)
         
         self.recentIncommingSequenceNumbers = \
             self.recentIncommingSequenceNumbers[-1000:]
@@ -343,10 +351,7 @@ class Peer(object):
         msg = tmsg.msg
         
         if msg == 'TAcknowledgement':
-            if self._processAcknowledgement(msg.sequenceNumber):
-                logger.debug('Received correct Ack: %s', tmsg)
-            else:
-                logger.debug('Could not process Ack: %s', tmsg)
+            self._receivedAcknowledgement(msg.sequenceNumber)
         
         elif msg == 'TConnectRequest':
             self.endpoint.processConnectRequest(msg, self)
@@ -371,17 +376,42 @@ class Peer(object):
         
         return self.endpoint.MESSAGE_HANDLED
     
-    def _processAcknowledgement(self, sequenceNumber):
-        for tmsg in self.outgoingMessages:
-            if tmsg.sequenceNumber == sequenceNumber:
-                self.outgoingMessages.remove(tmsg)
-                return True
-        return False
+    def _receivedAcknowledgement(self, sequenceNumber):
+        self.receivedAcknowledgements.put(sequenceNumber, False)
+    
+    def _processAcknowledgements(self):
+        while True:
+            try:
+                sequenceNumber = self.receivedAcknowledgements.get(False)
+            except queue.Empty:
+                break
+            else:
+                correct = False
+                for tmsg in self.outgoingMessages:
+                    if tmsg.sequenceNumber == sequenceNumber:
+                        self.outgoingMessages.remove(tmsg)
+                        correct = True
+                        break
+                if correct:
+                    logger.debug('Received correct Ack: %s', sequenceNumber)
+                else:
+                    logger.debug('Could not process Ack: %s', sequenceNumber)
     
     @property
     def outgoingPackets(self):
         buf = b''
         size = 0
+        
+        # new messages
+        while True:
+            try:
+                tmsg = self.newMessages.get(False)
+            except queue.Empty:
+                break
+            else:
+                self.outgoingMessages.append(tmsg)
+        
+        # messages in outgoing buffer
         sentMessages = []
         t = time()
         for tmsg in self.outgoingMessages:
@@ -415,6 +445,7 @@ class Peer(object):
             self.outgoingMessages.remove(tmsg)
     
     def update(self):
+        self._processAcknowledgements()
         if self.pendingDisconnect:
             return
         t = time()
