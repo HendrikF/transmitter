@@ -152,7 +152,7 @@ class Endpoint(object):
         return result
     
     def _putMessage(self, msg, peer):
-        self.receivedMessages.put((msg, peer), False)
+        self.receivedMessages.put((copy.deepcopy(msg), peer), False)
     
     def _newPeer(self, addr, append=True):
         peer = Peer(self, addr, self.nextPeerID)
