@@ -3,6 +3,7 @@ from threading import Thread
 import queue
 from collections import deque
 from time import time
+import copy
 from transmitter.Event import Event
 from transmitter.Message import Message, MessageFactory, TransportMessage
 from transmitter.ByteBuffer import ByteBuffer
@@ -313,7 +314,7 @@ class Peer(object):
     
     def _send(self, tmsg):
         if not self.pendingDisconnect:
-            self.newMessages.put(tmsg, False)
+            self.newMessages.put(copy.deepcopy(tmsg), False)
     
     def _sendAcknowledgement(self, sequenceNumber):
         msg = self.endpoint.messageFactory.getByName(

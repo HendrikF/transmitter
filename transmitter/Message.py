@@ -105,6 +105,12 @@ class Message(object):
     def __repr__(self):
         data = [(k, v[1]) for k, v in self._items()]
         return '<{} {}>'.format(self.__class__.__name__, data)
+    
+    def __deepcopy__(self, memodict={}):
+        msg = self.__class__()
+        msg.msgData = self.msgData.copy()
+        msg._factory = self._factory
+        return msg
 
 class MessageFactory(object):
     """A class that holds all the Message classes which can be received from the network"""
