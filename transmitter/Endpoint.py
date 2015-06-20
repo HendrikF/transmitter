@@ -398,7 +398,6 @@ class Peer(object):
     def _checkForCompleteSplitMessage(self, splitMessageNumber):
         d = self.receivedMessageParts[splitMessageNumber]
         if len(d['msg']) == d['max']:
-            logger.warning('Received full split message')
             data = b''
             for part in sorted(self.receivedMessageParts[splitMessageNumber]['msg'], 
                     key=lambda item: item.part if hasattr(item, 'part') else 0):
