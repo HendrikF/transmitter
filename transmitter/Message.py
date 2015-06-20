@@ -9,7 +9,7 @@ class Message(object):
     Every Message has a unique msgID and usually some fields of data of a special type and a default value.
     Custom Messages have a msgID >= 0."""
     ###########################################################################
-    # ONLY set the 1st 3 attributes in class definition, as they are defaults
+    # ONLY set these 4 attributes in class definition, as they are defaults
     # Use normal API to modify message instances
     msgID = 0
     msgReliable = False
@@ -65,11 +65,11 @@ class Message(object):
             t = v[0]
             v = v[1]
             if t == 'int':      format += 'l'
-            elif t == 'float':  format += 'd'
+            elif t == 'float':  format += 'f'
             elif t in ('str', 'bytes'):
                 if t == 'str':
                     v = v.encode()
-                format += 'l'
+                format += 'L'
                 values.append(len(v))
                 format += str(len(v)) + 's'
             elif t == 'bool':   format += '?'
@@ -84,9 +84,9 @@ class Message(object):
         for k, v in self._items():
             t = v[0]
             if t == 'int':      self.__setattr__(k, byteBuffer.readStruct('l')[0])
-            elif t == 'float':  self.__setattr__(k, byteBuffer.readStruct('d')[0])
+            elif t == 'float':  self.__setattr__(k, byteBuffer.readStruct('f')[0])
             elif t in ('str', 'bytes'):
-                length = byteBuffer.readStruct('l')[0]
+                length = byteBuffer.readStruct('L')[0]
                 data = byteBuffer.readStruct(str(length) + 's')[0]
                 if t == 'str':
                     data = data.decode()
@@ -128,6 +128,8 @@ class MessageFactory(object):
             TPing,
             TPong,
             TTimeout,
+            TMessageStart,
+            TMessagePart,
             )
     
     def add(self, *classes):
@@ -202,6 +204,7 @@ class TConnect(Message):
 
 class TDisconnect(Message):
     msgID = -2
+    msgReliable = True
 
 class TConnectRequest(Message):
     msgID = -3
@@ -238,3 +241,21 @@ class TPong(Message):
 
 class TTimeout(Message):
     msgID = -9
+
+class TMessageStart(Message):
+    msgID = -10
+    msgReliable = True
+    msgData = {
+        'splitMessageNumber': ('int', 0),
+        'parts': ('int', 0),
+        'data': ('bytes', b'')
+    }
+
+class TMessagePart(Message):
+    msgID = -11
+    msgReliable = True
+    msgData = {
+        'splitMessageNumber': ('int', 0),
+        'part': ('int', 0),
+        'data': ('bytes', b'')
+    }

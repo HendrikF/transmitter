@@ -14,7 +14,7 @@ from transmitter.BitField import BitField
 import logging
 logger = logging.getLogger(__name__)
 
-PROTOCOL = 1
+PROTOCOL = 2
 
 class Endpoint(object):
     """A NetworkEndpoint is a flexible interface for a Server and Client."""
@@ -62,6 +62,7 @@ class Endpoint(object):
         self.onTimeout = Event()
         
         self.lastOutgoingSequenceNumber = 0
+        self.lastSplitMessageNumber = 0
         
         # TransportMessages
         self.bufferedMessages = deque()
@@ -279,6 +280,11 @@ class Endpoint(object):
     def nextOutgoingSequenceNumber(self):
         self.lastOutgoingSequenceNumber += 1
         return self.lastOutgoingSequenceNumber
+    
+    @property
+    def nextSplitMessageNumber(self):
+        self.lastSplitMessageNumber += 1
+        return self.lastSplitMessageNumber
 
 class Peer(object):
     def __init__(self, endpoint, addr, _id):
@@ -303,6 +309,8 @@ class Peer(object):
         self.recentIncommingSequenceNumbers = []
         
         self.lastReceiveTime = 0
+        
+        self.receivedMessageParts = {}
     
     @property
     def latency(self):
@@ -372,10 +380,37 @@ class Peer(object):
             self.outgoingMessages.clear()
             self.endpoint._peerDisconnect(self)
         
+        elif msg == 'TMessageStart':
+            msg.part = 0
+            self.receivedMessageParts.setdefault(
+                msg.splitMessageNumber, {'max': msg.parts, 'msg': []})['msg'].append(copy.deepcopy(msg))
+            self._checkForCompleteSplitMessage(msg.splitMessageNumber)
+        elif msg == 'TMessagePart':
+            self.receivedMessageParts.setdefault(
+                msg.splitMessageNumber, {'max': -1, 'msg': []})['msg'].append(copy.deepcopy(msg))
+            self._checkForCompleteSplitMessage(msg.splitMessageNumber)
+        
         else:
             return self.endpoint.MESSAGE_UNHANDLED
         
         return self.endpoint.MESSAGE_HANDLED
+    
+    def _checkForCompleteSplitMessage(self, splitMessageNumber):
+        d = self.receivedMessageParts[splitMessageNumber]
+        if len(d['msg']) == d['max']:
+            logger.warning('Received full split message')
+            data = b''
+            for part in sorted(self.receivedMessageParts[splitMessageNumber]['msg'], 
+                    key=lambda item: item.part if hasattr(item, 'part') else 0):
+                data += part.data
+            # VERY HACKY - Improvement needed (more centralized / do in Peer)
+            byteBuffer = ByteBuffer(data)
+            msgID = byteBuffer.readStruct('l')[0]
+            msg = self.endpoint.messageFactory.getByID(msgID)()
+            msg._readFromByteBuffer(byteBuffer)
+            tmsg = TransportMessage(msg, self.endpoint.nextOutgoingSequenceNumber)
+            self.endpoint._processMessage(tmsg, self)
+            del self.receivedMessageParts[splitMessageNumber]
     
     def _receivedAcknowledgement(self, sequenceNumber):
         self.receivedAcknowledgements.put(sequenceNumber, False)
@@ -403,6 +438,9 @@ class Peer(object):
         buf = b''
         size = 0
         
+        mtu1 = self.endpoint.mtu
+        mtu2 = self.endpoint.mtu - 25 # overhead = 13 Transport + 12 TMessageStart/Part
+        
         # new messages
         while True:
             try:
@@ -410,7 +448,25 @@ class Peer(object):
             except queue.Empty:
                 break
             else:
-                self.outgoingMessages.append(tmsg)
+                l = len(tmsg.bytes)
+                if l > mtu1:
+                    # Message is bigger than MTU, it might get fragmented
+                    # and lost, so we send it in chunks, which we send reliable
+                    data = tmsg.msg._bytes
+                    # Split data in chunks
+                    parts = [data[i:i+mtu2] for i in range(0, len(data), mtu2)]
+                    splitMessageNumber = self.endpoint.nextSplitMessageNumber
+                    msg = self.endpoint.messageFactory.getByName('TMessageStart')(
+                        parts=len(parts), data=parts.pop(0), splitMessageNumber=splitMessageNumber)
+                    tmsg = TransportMessage(msg, self.endpoint.nextOutgoingSequenceNumber)
+                    self.outgoingMessages.append(copy.deepcopy(tmsg))
+                    Msg = self.endpoint.messageFactory.getByName('TMessagePart')
+                    for i in range(1, len(parts)+1):
+                        msg = Msg(part=i, data=parts.pop(0), splitMessageNumber=splitMessageNumber)
+                        tmsg = TransportMessage(msg, self.endpoint.nextOutgoingSequenceNumber)
+                        self.outgoingMessages.append(copy.deepcopy(tmsg))
+                else:
+                    self.outgoingMessages.append(tmsg)
         
         # messages in outgoing buffer
         sentMessages = []
@@ -421,11 +477,7 @@ class Peer(object):
                 continue
             tmsg.lastSendAttempt = t
             l = len(tmsg.bytes)
-            if l > self.endpoint.mtu:
-                logger.error('Message bigger than MTU! -- discarding')
-                sentMessages.append(tmsg)
-                continue
-            elif size + l >= self.endpoint.mtu:
+            if size + l >= mtu1:
                 # message doesnt fit in packet
                 # send the packet
                 yield buf
